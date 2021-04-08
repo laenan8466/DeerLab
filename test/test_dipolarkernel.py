@@ -96,7 +96,7 @@ def test_value_fresnel():
     "Test whether kernel matrix element (calculated using Fresnel integrals) is correct."
 
     # Generate kernel numerically
-    t = 1 # us
+    t = 1 # µs
     r = 1 # nm
     K = dipolarkernel(t,r,method='fresnel')
 
@@ -113,7 +113,7 @@ def test_value_grid():
     "Test whether kernel matrix element (calculated using the grid method) is correct."
 
     # Generate kernel numerically
-    t = 1 # us
+    t = 1 # µs
     r = 1 # nm
     K = dipolarkernel(t,r,method='grid',nKnots=2e6)
 
@@ -130,7 +130,7 @@ def test_value_integral():
     "Test whether kernel matrix element (calculated using the integal method) is correct."
 
     # Generate kernel numerically
-    t = 1 # us
+    t = 1 # µs
     r = 1 # nm
     K = dipolarkernel(t,r,method='integral')
 
@@ -146,11 +146,11 @@ def test_lambda():
 #=======================================================================
     "Check that dipolar kernel with modulation depth works"
 
-    t = np.linspace(0,4,150) # us
+    t = np.linspace(0,4,150) # µs
     r = np.linspace(1,5,150) # nm
     lam = 0.4
     Kref = ((1-lam) + lam*dipolarkernel(t,r, integralop=False))
-    K = dipolarkernel(t,r,lam, integralop=False)
+    K = dipolarkernel(t,r,mod=lam, integralop=False)
 
     assert np.all(abs(K-Kref) < 1e-14)
 #=======================================================================
@@ -164,9 +164,21 @@ def test_background():
 
     lam = 0.25
     KBref = (1 - lam + lam*dipolarkernel(t,r, integralop=False))*B[:,np.newaxis]
-    KB = dipolarkernel(t,r,lam,B, integralop=False)
+    KB = dipolarkernel(t,r,mod=lam, bg=B, integralop=False)
     
     assert np.all(abs(KB - KBref) < 1e-5)
+#=======================================================================
+
+def test_nobackground():
+#=======================================================================
+    "Check that dipolar kernel builds correctly without a background specified"
+    t = np.linspace(0,3,80)
+    r = np.linspace(2,6,100)
+
+    K1 = dipolarkernel(t,r)
+    
+    K2 = dipolarkernel(t,r,bg=None)
+    assert np.all(abs(K2 - K1) < 1e-5)
 #=======================================================================
 
 def test_multipath():
@@ -188,15 +200,11 @@ def test_multipath():
     paths.append([prob**2, 0])
     paths.append([prob*(1-prob), tau2-t2])
 
-    K = dipolarkernel(t,r,paths, integralop=False)
+    K = dipolarkernel(t,r,pathways=paths, integralop=False)
 
     Kref = 1-prob
-    Krenorm = Kref
     for p in range(len(lam)):
             Kref = Kref + lam[p]*calckernelmatrix(t-T0[p],r,'fresnel',[],[],[ge,ge])
-            Krenorm = Krenorm + lam[p]*calckernelmatrix(-T0[p],r,'fresnel',[],[],[ge,ge])
-    Kref = Kref/Krenorm
-    Kref = Kref
 
     assert np.all(abs(K-Kref) < 1e-3)
 #=======================================================================
@@ -219,19 +227,13 @@ def test_multipath_background():
 
     # Reference
     Kref = 1-prob
-    Krenorm = Kref
     for p in range(len(lam)):
             Kref = Kref + lam[p]*calckernelmatrix(t-T0[p],r,'fresnel',[],[],[ge,ge])
-            Krenorm = Krenorm + lam[p]*calckernelmatrix(-T0[p],r,'fresnel',[],[],[ge,ge])
-    Kref = Kref/Krenorm
     Kref = Kref
     
     Bref = 1
-    Bnorm = 1
     for p in range(len(lam)):
             Bref = Bref*Bmodel((t-T0[p]),lam[p])
-            Bnorm = Bnorm*Bmodel(-T0[p],lam[p])
-    Bref = Bref/Bnorm
     KBref = Kref*Bref[:,np.newaxis]
 
     paths = []
@@ -240,7 +242,7 @@ def test_multipath_background():
     paths.append([prob*(1-prob), tau2-t2])
 
     # Output
-    KB = dipolarkernel(t,r,paths,Bmodel, integralop=False)
+    KB = dipolarkernel(t,r,pathways=paths, bg=Bmodel, integralop=False)
 
     assert np.all(abs(KB - KBref) < 1e-3)
 #=======================================================================
@@ -266,14 +268,11 @@ def test_multipath_harmonics():
     paths.append([prob**2, 0, 2])
     paths.append([prob*(1-prob), tau2-t2,3])
 
-    K = dipolarkernel(t,r,paths, integralop=False)
+    K = dipolarkernel(t,r,pathways=paths, integralop=False)
 
     Kref = 1-prob
-    Krenorm = Kref
     for p in range(len(lam)):
             Kref = Kref + lam[p]*calckernelmatrix(n[p]*(t-T0[p]),r,'fresnel',[],[],[ge,ge])
-            Krenorm = Krenorm + lam[p]*calckernelmatrix(-n[p]*T0[p],r,'fresnel',[],[],[ge,ge])
-    Kref = Kref/Krenorm
     Kref = Kref
 
     assert np.max(K-Kref) < 1e-3
@@ -285,7 +284,7 @@ def test_excbandwidth_inf_grid():
 
     r = 2.5 # nm
     excitewidth = 15 # MHz
-    t = np.linspace(0,2,501) # us
+    t = np.linspace(0,2,501) # µs
 
     # Reference kernel with infinite bandwidth
     Kinf = dipolarkernel(t,r,excbandwidth=inf,method='grid')
@@ -302,7 +301,7 @@ def test_excbandwidth_inf_integral():
 
     r = 2.5 # nm
     excitewidth = 15 # MHz
-    t = np.linspace(0,2,501) # us
+    t = np.linspace(0,2,501) # µs
 
     # Reference kernel with infinite bandwidth
     Kinf = dipolarkernel(t,r,excbandwidth=inf,method='integral')
@@ -319,7 +318,7 @@ def test_excbandwidth():
 
     r = 2.5 # nm
     excitewidth = 15 # MHz
-    t = np.linspace(0,2,501) # us
+    t = np.linspace(0,2,501) # µs
 
     # Kernel using numerical integrals and approx. bandwidth treatment
     K = dipolarkernel(t,r,excbandwidth=excitewidth,method='grid')
@@ -334,7 +333,6 @@ def test_excbandwidth():
         w = wdd*orientation
         D_ = D_ + np.cos(w*abs(t))*np.exp(-w**2/excitewidth**2)
     K0 = D_/nKnots
-    K0 /= K0[0]
     K0 = K0.reshape((len(t),1))
 
     assert np.max(K0-K)<1e-4
@@ -345,7 +343,7 @@ def test_gvalues():
     """Check whether K matrix elements scale properly g-values"""
 
     t = 2 # nm
-    r = 3 # us
+    r = 3 # µs
     # isotropic g values of two spins
     g1 = 2.1
     g2 = 2.4
@@ -363,7 +361,7 @@ def test_r_scaling():
     """Check whether K matrix elements scale properly with t and r"""
 
     t = 2 # nm
-    r = 3 # us
+    r = 3 # µs
     c = 1.2 # distance scaling factor
 
     K1 = dipolarkernel(t,r)
@@ -372,21 +370,6 @@ def test_r_scaling():
     assert np.max(K1 - K2) < 1e-15
 #=======================================================================
 
-def test_arbitrary_pathway_amps():
-#=======================================================================
-    """Check compatibility with arbitrary pathway amplitudes"""
-
-    t = np.linspace(0,5,201)
-    r = 2.5
-    pathway=[]
-    pathway.append([0.2])
-    pathway.append([0.8, 0])
-    pathway.append([0.5, 3])
-
-    K = dipolarkernel(t,r,pathway)
-
-    assert np.round(K[0],2) == 1
-#=======================================================================
 
 def test_integralop():
 #=======================================================================

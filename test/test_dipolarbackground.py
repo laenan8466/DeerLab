@@ -69,25 +69,6 @@ def test_harmonics():
     assert max(abs(B-Bref)) < 1e-8
 #==================================================================================
 
-
-def test_lambda():
-#==================================================================================
-    "Check that dipolar background with modulation depth works"
-
-    t = np.linspace(0,5,150)
-    conc = 50
-    lam = 0.5
-
-    #Reference
-    Bref = bg_hom3d(t,lam*conc)
-
-    #Output
-    Bmodel = lambda t,lam: bg_hom3d(t,conc,lam)
-    B = dipolarbackground(t,lam,Bmodel)
-
-    assert max(abs(B-Bref)) < 1e-8
-#==================================================================================
-
 def test_multipath_renorm():
 #==================================================================================
     "Check that multi-pathway kernels are properly generated without renormalization"
@@ -103,20 +84,18 @@ def test_multipath_renorm():
     T0 = [0, tau2-t2]
     Bmodel = lambda t,lam: bg_hom3d(t,conc,lam)
 
-    #Reference
+    # Reference
     Bref = 1
-    Bnorm = 1
     for p in range(len(lam)):
             Bref = Bref*Bmodel((t-T0[p]),lam[p])
-            Bnorm = Bnorm*Bmodel(-T0[p],lam[p])
     
     paths = []
     paths.append(1-prob)
     paths.append([prob**2,0])
     paths.append([prob*(1-prob),tau2-t2])
 
-    #Output
-    B = dipolarbackground(t,paths,Bmodel,renormalize=False)
+    # Output
+    B = dipolarbackground(t,paths,Bmodel)
 
     assert max(abs(B-Bref)) < 1e-8
 #==================================================================================
@@ -138,11 +117,8 @@ def test_multipath_raw():
 
     #Reference
     Bref = 1
-    Bnorm = 1
     for p in range(len(lam)):
             Bref = Bref*Bmodel((t-T0[p]),lam[p])
-            Bnorm = Bnorm*Bmodel(-T0[p],lam[p])
-    Bref = Bref/Bnorm
     
     paths = []
     paths.append(1-prob)
@@ -196,4 +172,3 @@ def test_phenomenological():
 
     assert max(abs(B-Bref) < 1e-8)
 #==================================================================================
-test_phenomenological()

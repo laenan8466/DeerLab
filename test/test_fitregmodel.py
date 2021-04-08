@@ -182,7 +182,7 @@ def assert_confidence_intervals(Puq,Pfit):
         errors.append("The 50%-CI has larger values than the 95%-CI")
     if not np.all(np.minimum(0,P95lb)==0):
         errors.append("The non-negativity constraint is not working.")
-    assert not errors, "Errors occured:\n{}".format("\n".join(errors))
+    assert not errors, f"Errors occured:\n{chr(10).join(errors)}"
 
 def test_confinter_tikh():
 #============================================================
@@ -196,7 +196,7 @@ def test_confinter_tikh():
 
     fit = fitregmodel(V,K,r,'tikhonov','aic')
 
-    assert_confidence_intervals(fit.uncertainty,fit.P)
+    assert_confidence_intervals(fit.Puncert,fit.P)
 #============================================================
 
 def test_confinter_tv():
@@ -211,7 +211,7 @@ def test_confinter_tv():
 
     fit = fitregmodel(V,K,r,'tv','aic')
 
-    assert_confidence_intervals(fit.uncertainty,fit.P)
+    assert_confidence_intervals(fit.Puncert,fit.P)
 #============================================================
 
 
@@ -227,7 +227,7 @@ def test_confinter_huber():
 
     fit = fitregmodel(V,K,r,'huber','aic')
 
-    assert_confidence_intervals(fit.uncertainty,fit.P)
+    assert_confidence_intervals(fit.Puncert,fit.P)
 #============================================================
 
 def test_confinter_global():
@@ -238,7 +238,22 @@ def test_confinter_global():
 
     fit = fitregmodel([V1,V2],[K1,K2],r,'tikhonov','aic')
 
-    assert_confidence_intervals(fit.uncertainty,fit.P)
+    assert_confidence_intervals(fit.Puncert,fit.P)
+#============================================================
+
+def test_confinter_Vfit():
+#============================================================
+    "Check that the confidence intervals are correctly for the fitted signal"
+
+    t = np.linspace(-2,4,300)
+    r = np.linspace(2,6,100)
+    P = dd_gauss(r,[3,0.2])
+    K = dipolarkernel(t,r,mod=0.2)
+    V = K@P + whitegaussnoise(t,0.05)
+
+    fit = fitregmodel(V,K,r,'tikhonov','aic')
+
+    assert_confidence_intervals(fit.Vuncert,fit.V)
 #============================================================
 
 def test_renormalize():
@@ -390,3 +405,74 @@ def test_globalfit_scales():
 
     assert max(abs(np.asarray(scales)/np.asarray(fit.scale) - 1)) < 1e-2 
 #============================================================
+
+def test_plot():
+#============================================================
+    "Check the plotting method"
+
+    t = np.linspace(0,3,200)
+    r = np.linspace(1,5,100)
+    P = dd_gauss(r,[3,0.08])
+    K = dipolarkernel(t,r)
+    V = K@P
+
+    fit = fitregmodel(V,K,r,'tikhonov','aic')
+    fig = fit.plot(show=False)
+    assert str(fig.__class__)=="<class 'matplotlib.figure.Figure'>"
+#============================================================
+
+def test_cost_value():
+#============================================================
+    "Check that the cost value is properly returned"
+
+    np.random.seed(1)
+    t = np.linspace(-2,4,300)
+    r = np.linspace(2,6,100)
+    P = dd_gauss(r,[3,0.2])
+    K = dipolarkernel(t,r)
+    V = K@P + whitegaussnoise(t,0.01)
+    fit = fitregmodel(V,K,r)
+
+    assert isinstance(fit.cost,float) and np.round(fit.cost/np.sum(fit.residuals**2),5)==1
+#============================================================
+
+def test_convergence_criteria():
+#============================================================
+    "Check that convergence criteria can be specified without crashing"
+
+    t = np.linspace(0,3,200)
+    r = np.linspace(1,5,100)
+    P = dd_gauss(r,[3,0.08])
+    K = dipolarkernel(t,r)
+    V = K@P
+
+    fit = fitregmodel(V,K,r,'tikhonov','aic',tol=1e-9,maxiter=2e3)
+  
+    assert ovl(P,fit.P) > 0.90 # more than 80% overlap
+#============================================================
+
+def test_confinter_values():
+# ======================================================================
+    "Check that the values of the confidence intervals are correct"
+
+    np.random.seed(0)
+    A = np.random.rand(300,2)
+    p = np.array([0.5,3])
+    y = A@p + 0.2*np.random.randn(300)
+
+    # Reference confidence intervals (calculated using lmfit package, see #116)
+    cov = [99.73,95.45,68.27]
+    a_ci_ref = [[0.41918705096124576, 0.6052333453428683],
+                [0.4504549830560608, 0.5739654132472912], 
+                [0.48140740318342196, 0.5430129931207299]]
+    b_ci_ref = [[2.8472129716943995, 3.0317740823087562], 
+                [2.878254646104185, 3.00073387702068], 
+                [2.9089331341860465, 2.9700584546043713]]
+    
+    fit = fitregmodel(y,A, np.arange(2),renormalize=False,nonnegativity=False,regparam=0,regorder=0)
+    a_ci = [fit.Puncert.ci(cov[i])[0,:] for i in range(3)]
+    b_ci = [fit.Puncert.ci(cov[i])[1,:] for i in range(3)]
+
+    ci_match = lambda ci,ci_ref,truth:np.max(abs(np.array(ci) - np.array(ci_ref)))/truth < 0.01
+    assert ci_match(a_ci,a_ci_ref,p[0]) & ci_match(b_ci,b_ci_ref,p[1])
+# ======================================================================

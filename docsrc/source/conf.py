@@ -19,7 +19,7 @@ language = 'en'
 
 
 version = open(os.path.join('..','..','VERSION')).read().splitlines()[0]
-rst_epilog = '.. |version| replace:: {}'.format(version)
+rst_epilog = f'.. |version| replace:: {version}'
 
 # Add sphinx extensions
 extensions = [
@@ -36,15 +36,16 @@ extensions = [
 ]
 
 sphinx_gallery_conf = {
-     'examples_dirs': '../../examples',   # path to your example scripts
-     'gallery_dirs': 'auto_examples',  # path to where to save gallery generated output
+    'filename_pattern': 'ex_',
+    'examples_dirs': '../../examples',   # path to your example scripts
+    'gallery_dirs': 'auto_examples',  # path to where to save gallery generated output
 }
 
+# Warnings suppression
 import warnings
-warnings.filterwarnings("ignore", category=UserWarning,
-                        message='Matplotlib is currently using agg, which is a'
-                                ' non-GUI backend, so cannot show the figure.')
-
+warnings.filterwarnings("ignore", category=FutureWarning)
+exclude_patterns = ['.', './functions']
+numpydoc_show_class_members = False
 # Render Latex math equations as svg instead of rendering with JavaScript
 imgmath_image_format = 'svg'
 imgmath_dvisvgm = 'dvisvgm'

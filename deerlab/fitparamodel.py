@@ -7,13 +7,13 @@ import numpy as np
 import matplotlib.pyplot as plt
 import warnings
 from deerlab.utils import multistarts, hccm, parse_multidatasets, goodness_of_fit, Jacobian
-from deerlab.classes import UncertQuant, FitResult
+from deerlab.classes import UQResult, FitResult
 from scipy.optimize import least_squares
 
 
 def fitparamodel(V, model, par0, lb=None, ub=None, weights=1,
                  multistart=1, tol=1e-10, maxiter=3000,
-                 rescale=True, uqanalysis=True, covmatrix=None):
+                 fitscale=True, uq=True, covmatrix=None):
     r""" Fits the dipolar signal(s) to a parametric model using non-linear least-squares.
 
     Parameters
@@ -36,13 +36,13 @@ def fitparamodel(V, model, par0, lb=None, ub=None, weights=1,
     weights : array_like, optional
         Array of weighting coefficients for the individual signals in global fitting, the default is all weighted equally.
     
-    rescale : boolean, optional
-        Enable/disable optimization of the signal scale, by default it is enabled.
+    fitscale : boolean, optional
+        Enable/disable fitting of the signal scale, by default it is enabled.
     
     multiStarts : scalar, optional
         Number of starting points for global optimization, the default is 1.
     
-    uqanalysis : boolean, optional
+    uq : boolean, optional
         Enable/disable the uncertainty quantification analysis, by default it is enabled.    
     
     tol : scalar, optional
@@ -59,18 +59,26 @@ def fitparamodel(V, model, par0, lb=None, ub=None, weights=1,
     -------
     :ref:`FitResult` with the following fields defined:
     param : ndarray
-        Fitted model parameters
+        Fitted model parameters.
     
-    uncertainty : :ref:`UncertQuant`
+    model : ndarray 
+        Fitted model.
+
+    paramUncert : :ref:`UQResult`
         Covariance-based uncertainty quantification of the fitted parameters.
-    
+ 
+    modelUncert : :ref:`UQResult`
+        Covariance-based uncertainty quantification of the fitted model.
+
     scale : float int or list of float int
         Amplitude scale(s) of the dipolar signal(s).
     
     plot : callable
         Function to display the results. It will 
-        display the fitted signals. If requested, the function returns 
-        the ``matplotlib.axes`` object as output. 
+        display the fitted signals. The function returns the figure object 
+        (``matplotlib.figure.Figure``) object as output, which can be 
+        modified. Using ``fig = plot(show=False)`` will not render
+        the figure unless ``display(fig)`` is called. 
     
     stats :  dict
         Goodness of fit statistical estimators:
@@ -132,7 +140,6 @@ def fitparamodel(V, model, par0, lb=None, ub=None, weights=1,
         fit = dl.fitparamodel([V1,V2],Vmodel,par0,lb,ub)
 
     """
-    
     V, model, weights, Vsubsets = parse_multidatasets(V, model, weights)
     Nsignals = len(Vsubsets)
     scales = [1]*Nsignals
@@ -171,8 +178,7 @@ def fitparamodel(V, model, par0, lb=None, ub=None, weights=1,
         Function that provides vector of residuals, which is the objective
         function for the least-squares solvers
         """
-        nonlocal scales
-
+        # Evaluate the model
         Vsim = model(p)
 
         # Check if there are invalid values...
@@ -180,14 +186,15 @@ def fitparamodel(V, model, par0, lb=None, ub=None, weights=1,
             res = np.zeros_like(Vsim) # ...can happen when Jacobian is evaluated outside of bounds
             return res
 
-        # Otherwise if requested, compute the scale of the signal via linear LSQ   
-        if rescale:
+        # If requested, fit the scale of the signal via linear LSQ
+        if fitscale:
+            nonlocal scales
             scales = []
             for subset in Vsubsets:
                 Vsim_,V_ = (V[subset] for V in [Vsim, V]) # Rescale the subsets corresponding to each signal
                 scale = np.squeeze(np.linalg.lstsq(np.atleast_2d(Vsim_).T,np.atleast_2d(V_).T,rcond=None)[0])
                 Vsim[subset] = scale*Vsim_  
-                scales.append(scale) # Store the optimized scales of each signal
+                scales.append(scale) # Store the fitted scales of each signal
 
         # Compute the residual
         res = weights*(V-Vsim)
@@ -202,7 +209,7 @@ def fitparamodel(V, model, par0, lb=None, ub=None, weights=1,
         sol = least_squares(lsqresiduals ,par0, bounds=(lb,ub), max_nfev=int(maxiter), ftol=tol, method='dogbox')
         sols.append(sol)
         parfits.append(sol.x)
-        fvals.append(sol.cost)        
+        fvals.append(2*sol.cost) # least_squares uses 0.5*sum(residual**2)          
 
     # Find global minimum from multiple runs
     globmin = np.argmin(fvals)
@@ -218,16 +225,16 @@ def fitparamodel(V, model, par0, lb=None, ub=None, weights=1,
             # Skip if parameter is fixed
             continue
         if atLower[p]:
-            warnings.warn('The fitted value of parameter #{}, is at the lower bound ({}).'.format(p,lb[p]))
+            warnings.warn(f'The fitted value of parameter #{p}, is at the lower bound ({lb[p]}).')
         if atUpper[p]:
-            warnings.warn('The fitted value of parameter #{},  is at the upper bound ({}).'.format(p,ub[p]))
+            warnings.warn(f'The fitted value of parameter #{p},  is at the upper bound ({ub[p]}).')
+
+    # Compute residual vector
+    residuals = lsqresiduals(parfit)
 
     # Calculate parameter confidence intervals
-    if uqanalysis:
-        
-        # Compute residual vector and estimate variance from that
-        residuals = lsqresiduals(parfit)
-        
+    if uq:
+                
         # Calculate numerical estimates of the Jacobian and Hessian
         # of the negative log-likelihood
         with warnings.catch_warnings():
@@ -242,9 +249,18 @@ def fitparamodel(V, model, par0, lb=None, ub=None, weights=1,
             # Use user-given data covariance matrix
             covmatrix = hccm(J,covmatrix)
         # Construct confidence interval structure
-        paruq = UncertQuant('covariance',parfit,covmatrix,lb,ub)
+        paruq = UQResult('covariance',parfit,covmatrix,lb,ub)
     else:
-        paruq = UncertQuant('void')
+        paruq = UQResult('void')
+
+    modelfit,modelfit_uq = [],[]
+    for subset in Vsubsets: 
+        subset_model = lambda p: model(p)[subset]
+        modelfit.append(subset_model(parfit))
+        if uq:
+            modelfit_uq.append(paruq.propagate(subset_model))        
+        else: 
+            modelfit_uq.append(UQResult('void'))
 
     # Calculate goodness of fit
     stats = []
@@ -255,17 +271,22 @@ def fitparamodel(V, model, par0, lb=None, ub=None, weights=1,
     if Nsignals==1: 
         stats = stats[0]
         scales = scales[0]
+        fvals = fvals[0]
+        modelfit = modelfit[0]
+        modelfit_uq = modelfit_uq[0]
 
     # Get plot function
-    plotfcn = lambda: _plot(Vsubsets,V,Vfit)
+    def plotfcn(show=False):
+        fig = _plot(Vsubsets,V,Vfit,show)
+        return fig
 
     return FitResult(
-            param=parfit, uncertainty=paruq, scale=scales, stats=stats, cost=fvals,
-            plot=plotfcn, residuals=sol.fun, success=sol.success)
+            param=parfit, model=modelfit, paramUncert=paruq, modelUncert=modelfit_uq, scale=scales, stats=stats, cost=fvals,
+            plot=plotfcn, residuals=residuals, success=sol.success)
 
-def _plot(Vsubsets,V,Vfit):
+def _plot(Vsubsets,V,Vfit,show):
     nSignals = len(Vsubsets)
-    _,axs = plt.subplots(nSignals,figsize=[7,3*nSignals])
+    fig,axs = plt.subplots(nSignals,figsize=[7,3*nSignals])
     axs = np.atleast_1d(axs)
     for i in range(nSignals): 
         subset = Vsubsets[i]
@@ -274,9 +295,12 @@ def _plot(Vsubsets,V,Vfit):
         axs[i].plot(Vfit[subset],'tab:blue')
         axs[i].grid(alpha=0.3)
         axs[i].set_xlabel('Array Elements')
-        axs[i].set_ylabel('V[{}]'.format(i))
+        axs[i].set_ylabel(f'V[{i}]')
         axs[i].legend(('Data','Fit'))
 
     plt.tight_layout()
-    plt.show()
-    return axs
+    if show:
+        plt.show()
+    else:
+        plt.close()
+    return fig

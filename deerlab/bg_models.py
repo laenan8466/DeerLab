@@ -8,100 +8,151 @@ import math as m
 import scipy as scp
 from numpy import pi
 import inspect
+from deerlab.utils import load_exvolume_redfactor, metadata
 
-def _parsargs(args,npar,takes_lambda=False):
-#=================================================================
-    name = inspect.stack()[1][3]
+
+# =================================================================
+def docstr_header1(title,fcnstr): 
+    """ Definition of the header for all experiment models taking lambda as well"""
+    return f"""
+{title}
+
+The function takes a list or array of parameters and returns the calculated background model::
+
+        B = {fcnstr}(t,param)
+        B = {fcnstr}(t,param,lam)
+
+The built-in information on the model can be accessed via its attributes::
+
+        {fcnstr}.parameters  # String list of parameter names
+        {fcnstr}.units       # String list of metric units of parameters
+        {fcnstr}.start       # List of values used as start values during optimization 
+        {fcnstr}.lower       # List of values used as lower bounds during optimization
+        {fcnstr}.upper       # List of values used as upper bounds during optimization 
+
+
+Parameters
+----------
+t : array_like
+    Time axis, in microseconds.
+param : array_like
+    List of model parameter values.
+lam : float scalar
+    Pathway amplitude. If not specified it is set to 1.
+
+Returns
+-------
     
-    # Check the number of input arguments specified
-    if not takes_lambda:
-        if len(args)==2:
-            t,p = args
-        else:
-            raise KeyError('The model function {} requires two input arguments: {}(t,params).'.format(name,name))
-    if takes_lambda:
-        if len(args)==3:
-            t,p,lam = args
-        elif len(args)==2:
-            t,p = args
-            lam = 1
-        else:
-            raise KeyError('The model function {} requires two or three input arguments: {}(t,params) or {}(t,params,lambda).'.format(name,name,name))
+B : ndarray
+    Dipolar background. 
+"""
+# =================================================================
 
-    t = np.atleast_1d(t)
-    p = np.atleast_1d(p)
+# =================================================================
+def docstr_header2(title,fcnstr): 
+    """Definition of the header for all experiment models"""
+    return f"""
+{title}
 
+The function takes a list or array of parameters and returns the calculated background model::
+
+        B = {fcnstr}(t,param)
+
+The built-in information on the model can be accessed via its attributes::
+
+        {fcnstr}.parameters  # String list of parameter names
+        {fcnstr}.units       # String list of metric units of parameters
+        {fcnstr}.start       # List of values used as start values during optimization 
+        {fcnstr}.lower       # List of values used as lower bounds during optimization
+        {fcnstr}.upper       # List of values used as upper bounds during optimization 
+
+
+Parameters
+----------
+t : array_like
+    Time axis, in microseconds.
+param : array_like
+    List of model parameter values.
+
+Returns
+-------
+    
+B : ndarray
+    Dipolar background. 
+"""
+# =================================================================
+
+# =================================================================
+def docstring(takes_lambda=False):
+    """
+    Decorator: Insert docstring header to a pre-existing docstring
+    """
+    sep="\n"
+    def _decorator(func):
+        docstr = func.__doc__
+        title = docstr.split("Model parameters:",1)[0]
+        docstr = docstr.replace(title,"")
+        if takes_lambda:
+            func.__doc__ = sep.join([docstr_header1(title,func.__name__),docstr])
+        else:
+            func.__doc__ = sep.join([docstr_header2(title,func.__name__),docstr])
+        return func
+    return _decorator
+# =================================================================
+
+# =================================================================
+def _parsargs(t,p,npar):
+    t,p = np.atleast_1d(t,p)
     # Check that the correct number of parmameters have been specified
     if len(p)!=npar:
-        raise ValueError('The model function {} requires {} parameters, but {} are provided.'.format(name,npar,len(p)))
+        raise ValueError(f'The model function requires {npar} parameters, but {len(p)} are provided.')
+ 
+    return t,p
+# =================================================================
 
-    if takes_lambda:
-        return t,p,lam
-    else:   
-        return t,p
-#=================================================================
 
-def bg_hom3d(*args):
+# =================================================================
+@metadata(
+parameters = ['Concentration of pumped spins'],
+units = ['μM'],
+start = np.asarray([50]),
+lower = np.asarray([0.01]),
+upper = np.asarray([5000]))
+@docstring(takes_lambda=True)
+def bg_hom3d(t,param,lam=1):
     r"""
-    Background from homogeneous distribution of spins in a 3D medium
-
-    If called without arguments, returns an ``info`` dictionary of model parameters and boundaries::
-
-        info = bg_hom3d()
-
-
-    Otherwise the function returns to calculated background model::
+Background from homogeneous distribution of spins in a 3D medium
     
+Notes
+-----
 
-        B = bg_hom3d(t,param)
-        B = bg_hom3d(t,param,lam)
- 
- 
-    Model parameters:
-    -------------------
+**Model:**
 
-     ----------------------------------------------------------------------
-      Parameter                        Units     Lower    Upper    Start
-     ----------------------------------------------------------------------
-      Concentration of pumped spins     μM        0.01    5000      50 
-     ----------------------------------------------------------------------
+This model describes the inter-molecular interaction of one observer spin with a 3D homogenous distribution of pump-spins of concentration `c_p`
 
-    Parameters
-    ----------
-    t : array_like
-        Time axis, in microseconds.
-    param : array_like
-        List of model parameter values.
-    lam : float scalar
-        Pathway amplitude. If not specified it is set to 1.
+.. image:: ../images/model_scheme_bg_hom3d.png
+   :width: 350px
 
-    Returns
-    -------
-    info : dict
-        Dictionary containing the built-in information of the model:
-        
-        * ``info['Parameters']`` - string list of parameter names
-        * ``info['Units']`` - string list of metric units of parameters
-        * ``info['Start']`` - list of values used as start values during optimization 
-        * ``info['Lower']`` - list of values used as lower bounds during optimization 
-        * ``info['Upper']`` - list of values used as upper bounds during optimization 
-    B : ndarray
-        Background decay function. 
+The expression for this model is
+
+.. math::
+   B(t) = \mathrm{exp}\left(-\frac{8\pi^2}{9\sqrt{3}}\lambda c_p D |t|\right)`
+
+where `c_p` is the pumped-spin concentration (entered in spins/m\ :sup:`3` into this expression) and D is the dipolar constant
+
+.. math::
+   D = \frac{\mu_0}{4\pi}\frac{(g_\mathrm{e}\mu_\mathrm{B})^2}{\hbar}
+
+============== =============== ============= ============= ============= =================================
+ Variable         Symbol        Start Value   Lower bound   Upper bound      Description
+============== =============== ============= ============= ============= =================================
+``param[0]``   :math:`c_p`        50            0.01           5000       Pumped spin concentration (μM)
+============== =============== ============= ============= ============= =================================
     """  
-# ======================================================================
-    if not args:
-        info = dict(
-            Parameters = ['Concentration of pumped spins'],
-            Units = ['μM'],
-            Start = np.asarray([50]),
-            Lower = np.asarray([0.01]),
-            Upper = np.asarray([5000])
-        )
-        return info
-    t,param,lam = _parsargs(args, npar=1, takes_lambda=True) 
+    t,param = _parsargs(t,param,npar=1) 
 
-    conc = param            # concentration, uM
-    NA = 6.02214076e23      # Avogadro constant, mol^-1
+    conc = param            # concentration, µM
+    Nav = 6.02214076e23      # Avogadro constant, mol^-1
     muB = 9.2740100783e-24  # Bohr magneton, J/T (CODATA 2018 value)
     mu0 = 1.25663706212e-6  # magnetic constant, N A^-2 = T^2 m^3 J^-1 (CODATA 2018)
     h = 6.62607015e-34      # Planck constant, J/Hz (CODATA 2018)
@@ -110,84 +161,64 @@ def bg_hom3d(*args):
 
     D = (mu0/4/pi)*(muB*ge)**2/hbar   # dipolar constant, m^3 s^-1
     
-    conc = conc*1e-6*1e3*NA # umol/L -> mol/L -> mol/m^3 -> spins/m^3
+    conc = conc*1e-6*1e3*Nav # umol/L -> mol/L -> mol/m^3 -> spins/m^3
     
     # Compute background function
     B = np.exp(-8*pi**2/9/m.sqrt(3)*lam*conc*D*np.abs(t*1e-6))
     return B
 # ======================================================================
 
-from deerlab.utils import load_exvolume_redfactor
 
-def bg_hom3dex(*args):
+# =================================================================
+@metadata(
+parameters = ['Spin concentration','Exclusion distance'],
+units = ['μM','nm'],
+start = np.asarray([50,   1]),
+lower = np.asarray([0.01, 0.01]),
+upper = np.asarray([5000, 20]))
+@docstring(takes_lambda=True)
+def bg_hom3dex(t,param,lam=1):
     r"""
-    Background from homogeneous distribution of spins with excluded-volume effects
-
-    If called without arguments, returns an ``info`` dictionary of model parameters and boundaries::
-
-        info = bg_hom3dex()
-
-
-    Otherwise the function returns to calculated background model::
+Background from homogeneous distribution of spins with excluded-volume effects
     
+Notes
+-----
 
-        B = bg_hom3dex(t,param)
-        B = bg_hom3dex(t,param,lam)
- 
- 
-    Model parameters:
-    -------------------
+**Model:**
 
-     -----------------------------------------------------------------------------
-      Parameter                                Units     Lower    Upper    Start
-     -----------------------------------------------------------------------------
-      Fractal Concentration of pumped spins   μmol/dmᵈ    0.01    5000      50 
-      Exclusion distance                        nm        0.10     20       1 
-     -----------------------------------------------------------------------------
+.. image:: ../images/model_scheme_bg_hom3dex.png
+   :width: 350px
 
-    Parameters
-    ----------
-    t : array_like
-        Time axis, in microseconds.
-    param : array_like
-        List of model parameter values.
-    lam : float scalar
-        Pathway amplitude. If not specified it is set to 1.
+This implements a hard-shell excluded-volume model, with pumped spin concentration ``c`` (first parameter, in μM) and distance of closest approach ``R`` (second parameter, in nm).
 
-    Returns
-    -------
-    info : dict
-        Dictionary containing the built-in information of the model:
-        
-        * ``info['Parameters']`` - string list of parameter names
-        * ``info['Units']`` - string list of metric units of parameters
-        * ``info['Start']`` - list of values used as start values during optimization 
-        * ``info['Lower']`` - list of values used as lower bounds during optimization 
-        * ``info['Upper']`` - list of values used as upper bounds during optimization 
-    B : ndarray
-        Background decay function. 
+The expression for this model is
+
+.. math:: B(t) = \mathrm{exp}\left(-\frac{8\pi^2}{9\sqrt{3}}\alpha(R) \lambda c D |t|\right)`
+
+where :math:`c` is the spin concentration (entered in spins/m\ :sup:`3` into this expression) and :math:`D` is the dipolar constant
+
+.. math:: D = \frac{\mu_0}{4\pi}\frac{(g_\mathrm{e}\mu_\mathrm{B})^2}{\hbar}
+
+The function :math:`\alpha(R)` of the exclusion distance :math:`R` captures the excluded-volume effect. It is a smooth function, but doesn't have an analytical representation. For details, see `Kattnig et al, J.Phys.Chem.B 2013, 117, 16542 <https://pubs.acs.org/doi/abs/10.1021/jp408338q>`_.
+
+============== =============== ============= ============= ============= =================================
+ Variable         Symbol        Start Value   Lower bound   Upper bound      Description
+============== =============== ============= ============= ============= =================================
+``param[0]``    :math:`c`              50         0.01          5000          Spin concentration (μM)
+``param[1]``    :math:`R`              1          0.1            20           Exclusion distance (nm)
+============== =============== ============= ============= ============= =================================
     """  
-# ======================================================================
-    if not args:
-        info = dict(
-            Parameters = ['Fractal Concentration of pumped spins','Fractal dimensionality'],
-            Units = ['μmol/dmᵈ',''],
-            Start = np.asarray([50,   1]),
-            Lower = np.asarray([0.01, 0.01]),
-            Upper = np.asarray([5000, 20])
-        )
-        return info
-    t,param,lam = _parsargs(args, npar=2, takes_lambda=True) 
-
+    t,param = _parsargs(t,param, npar=2) 
+    
     # Load precalculated reduction factor look-up table (Kattnig Eq.(18))
     dR_tab,alphas_tab = load_exvolume_redfactor()
 
     # Get parameters
-    conc = param[0] # uM
+    conc = param[0] # µM
     R = param[1]    # nm
 
-    NA = 6.02214076e23      # Avogadro constant, mol^-1
-    conc = conc*1e-6*1e3*NA # umol/L -> mol/L -> mol/m^3 -> spins/m^3
+    NAv = 6.02214076e23      # Avogadro constant, mol^-1
+    conc = conc*1e-6*1e3*NAv # umol/L -> mol/L -> mol/m^3 -> spins/m^3
     ge = 2.00231930436256   # free-electron g factor (CODATA 2018 value)
     mu0 = 1.25663706212e-6  # magnetic constant, N A^-2 = T^2 m^3 J^-1 (CODATA 2018)
     muB = 9.2740100783e-24  # Bohr magneton, J/T (CODATA 2018 value)
@@ -212,72 +243,37 @@ def bg_hom3dex(*args):
 
     K = 8*pi**2/9/np.sqrt(3)*A*abs(t*1e-6)*alpha # Eq.(17)
     B = np.exp(-lam*conc*K) # Eq.(13)
-
     return B
 # ======================================================================
 
 
-
-def bg_homfractal(*args):
+# =================================================================
+@metadata(
+parameters = ['Fractal Concentration of pumped spins','Fractal dimensionality'],
+units = ['μmol/dmᵈ',''],
+start = np.asarray([50,   3]),
+lower = np.asarray([0.01, 0+np.finfo(float).eps]),
+upper = np.asarray([5000, 6-np.finfo(float).eps]))
+@docstring(takes_lambda=True)
+def bg_homfractal(t,param,lam=1):
     r"""
-    Background from homogeneous distribution of spins in a fractal medium
-
-    If called without arguments, returns an ``info`` dictionary of model parameters and boundaries::
-
-        info = bg_homfractal()
-
-
-    Otherwise the function returns to calculated background model::
+Background from homogeneous distribution of spins in a fractal medium
     
+Notes
+-----
 
-        B = bg_homfractal(t,param)
-        B = bg_homfractal(t,param,lam)
- 
- 
-    Model parameters:
-    -------------------
+**Model:**
 
-     -----------------------------------------------------------------------------
-      Parameter                                Units     Lower    Upper    Start
-     -----------------------------------------------------------------------------
-      Fractal Concentration of pumped spins   μmol/dmᵈ    0.01    5000      50 
-      Fractal dimensionality                               0        6       3
-     -----------------------------------------------------------------------------
+This implements the background due to a homogeneous distribution of spins in a d-dimensional space, with d-dimensional spin concentration ``c_d``.
 
-    Parameters
-    ----------
-    t : array_like
-        Time axis, in microseconds.
-    param : array_like
-        List of model parameter values.
-    lam : float scalar
-        Pathway amplitude. If not specified it is set to 1.
-
-    Returns
-    -------
-    info : dict
-        Dictionary containing the built-in information of the model:
-        
-        * ``info['Parameters']`` - string list of parameter names
-        * ``info['Units']`` - string list of metric units of parameters
-        * ``info['Start']`` - list of values used as start values during optimization 
-        * ``info['Lower']`` - list of values used as lower bounds during optimization 
-        * ``info['Upper']`` - list of values used as upper bounds during optimization 
-    B : ndarray
-        Background decay function. 
+============= ============= ============= ============= ============= ==========================================================
+ Variable       Symbol       Start Value   Lower bound   Upper bound      Description
+============= ============= ============= ============= ============= ==========================================================
+``param[0]``   :math:`c_d`     50          0.01          5000          Pumped spin fractal concentration (μmol/dm\ :sup:`d`)
+``param[1]``   :math:`d`       3           0                6          Fractal dimension
+============= ============= ============= ============= ============= ==========================================================
     """  
-# ======================================================================
-    if not args:
-        info = dict(
-            Parameters = ['Fractal Concentration of pumped spins','Fractal dimensionality'],
-            Units = ['μmol/dmᵈ',''],
-            Start = np.asarray([50,   3]),
-            Lower = np.asarray([0.01, 0+np.finfo(float).eps]),
-            Upper = np.asarray([5000, 6-np.finfo(float).eps])
-        )
-        return info
-    t,param,lam = _parsargs(args, npar=2, takes_lambda=True)
- 
+    t,param = _parsargs(t,param,npar=2) 
 
     # Unpack model paramters
     conc = param[0]         # concentration, umol/dm^d
@@ -308,197 +304,118 @@ def bg_homfractal(*args):
     B = np.exp(4*pi/3*c*Lam*lam*conc*D**(d/3)*abs(t*1e-6)**(d/3))
 
     return B
-# ======================================================================
+ # ======================================================================
 
 
-def bg_exp(*args):
+# =================================================================
+@metadata(
+parameters = ['Decay Rate'],
+units = ['μs⁻¹'],
+start = np.asarray([0.35]),
+lower = np.asarray([0]),
+upper = np.asarray([200]))
+@docstring()
+def bg_exp(t,param):
     r"""
-    Exponential background model
-   
-    If called without arguments, returns an ``info`` dictionary of model parameters and boundaries::
-
-        info = bg_exp()
-
-
-    Otherwise the function returns to calculated background model::
+Exponential background model
     
-        B = bg_exp(t,param)
- 
- 
-    Model parameters:
-    -------------------
+Notes
+-----
 
-     -------------------------------------------------
-      Parameter    Units     Lower    Upper    Start
-     -------------------------------------------------
-      Decay Rate    μs⁻¹       0       200      0.35 
-     -------------------------------------------------
+**Model:**
+
+.. math::
+
+   B(t) = \exp\left(-\kappa \vert t \vert\right)
+
+============== =============== ============= ============= ============= ================================
+ Variable         Symbol        Start Value   Lower bound   Upper bound      Description
+============== =============== ============= ============= ============= ================================
+``param[0]``   :math:`\kappa`      0.35         0            200          Decay rate (μs\ :sup:`-1`)
+============== =============== ============= ============= ============= ================================
 
 
-    Parameters
-    ----------
-    t : array_like
-        Time axis, in microseconds.
-    param : array_like
-        List of model parameter values.
-
-    Returns
-    -------
-    info : dict
-        Dictionary containing the built-in information of the model:
-        
-        * ``info['Parameters']`` - string list of parameter names
-        * ``info['Units']`` - string list of metric units of parameters
-        * ``info['Start']`` - list of values used as start values during optimization 
-        * ``info['Lower']`` - list of values used as lower bounds during optimization 
-        * ``info['Upper']`` - list of values used as upper bounds during optimization 
-    B : ndarray
-        Background decay function. 
+Although the ``bg_exp`` model has the same functional form as ``bg_hom3d``, it is distinct since its 
+parameter is a decay rate constant and not a spin concentration like for ``bg_hom3d``. 
     """  
-# ======================================================================
-    if not args:
-        info = dict(
-            Parameters = ['Decay Rate'],
-            Units = ['μs⁻¹'],
-            Start = np.asarray([0.35]),
-            Lower = np.asarray([0]),
-            Upper = np.asarray([200])
-        )
-        return info
-    t,param = _parsargs(args, npar=1) 
-    
+    t,param = _parsargs(t,param,npar=1) 
     t = np.atleast_1d(t)
     param = np.atleast_1d(param)
-
     kappa = param[0]
     B = np.exp(-kappa*np.abs(t))
     return B
 # ======================================================================
 
-def bg_strexp(*args):
+
+# =================================================================
+@metadata(
+parameters = ['Decay Rate','Stretch factor'],
+units = ['μs⁻¹',''],
+start = np.asarray([0.25, 1]),
+lower = np.asarray([0,    0]),
+upper = np.asarray([200,  6]))
+@docstring()
+def bg_strexp(t,param):
     r"""
-    Stretched exponential background model
- 
-    If called without arguments, returns an ``info`` dictionary of model parameters and boundaries::
+Stretched exponential background model
+    
+Notes
+-----
 
-        info = bg_strexp()
+**Model:**
 
+.. math::
 
-    Otherwise the function returns to calculated background model::
+    B(t) = \exp\left(-\kappa \vert t\vert^{d}\right)
 
-        B = bg_strexp(t,param)
- 
- 
-    Model parameters:
-    -------------------
+============== ================= ============= ============= ============= =================================
+ Variable         Symbol          Start Value   Lower bound   Upper bound      Description
+============== ================= ============= ============= ============= =================================
+``param[0]``   :math:`\kappa`      0.25              0              200        Decay rate (μs\ :sup:`-d`)
+``param[1]``   :math:`d`           1                 0              6          Stretch factor
+============== ================= ============= ============= ============= =================================
 
-     ----------------------------------------------------
-      Parameter        Units     Lower    Upper   Start
-     ----------------------------------------------------
-      Decay Rate       μs⁻ᵈ       0       200      0.25 
-      Stretch factor              0        6        1
-     ----------------------------------------------------
-
-    Parameters
-    ----------
-    t : array_like
-        Time axis, in microseconds.
-    param : array_like
-        List of model parameter values.
-
-    Returns
-    -------
-    info : dict
-        Dictionary containing the built-in information of the model:
-        
-        * ``info['Parameters']`` - string list of parameter names
-        * ``info['Units']`` - string list of metric units of parameters
-        * ``info['Start']`` - list of values used as start values during optimization 
-        * ``info['Lower']`` - list of values used as lower bounds during optimization 
-        * ``info['Upper']`` - list of values used as upper bounds during optimization 
-    B : ndarray
-        Background decay function. 
+Although the ``bg_strexp`` model has the same functional form as ``bg_homfractal``, it is distinct since its
+first parameter is a decay rate constant and not a spin concentration like for ``bg_homfractal``.
     """  
-# ======================================================================
-    if not args:
-        info = dict(
-            Parameters = ['Decay Rate','Stretch factor'],
-            Units = ['μs⁻¹',''],
-            Start = np.asarray([0.25, 1]),
-            Lower = np.asarray([0,    0]),
-            Upper = np.asarray([200,  6])
-        )
-        return info
-    t,param = _parsargs(args, npar=2) 
-
-    # Unpack model paramters
+    t,param = _parsargs(t,param,npar=2) 
     kappa = param[0]         # decay rate, µs^-1
     d = param[1]            # fractal dimension    
     B = np.exp(-kappa*abs(t)**d)
-    
     return B
 # ======================================================================
 
 
-def bg_prodstrexp(*args):
+# =================================================================
+@metadata(
+parameters = ['Decay Rate of 1st component','Stretch factor of 1st component',
+              'Decay Rate of 2nd component','Stretch factor of 2nd component'],
+units = ['µs^-1','','µs^-1',''],
+start = np.asarray([0.25, 1, 0.25, 1]),
+lower = np.asarray([ 0,   0,  0,   0]),
+upper = np.asarray([200,  6, 200,  6]))
+@docstring()
+def bg_prodstrexp(t,param):
     r"""
-    Product of two stretched exponentials background model
- 
-    If called without arguments, returns an ``info`` dictionary of model parameters and boundaries::
-
-        info = bg_prodstrexp()
-
-
-    Otherwise the function returns to calculated background model::
+Product of two stretched exponentials background model
     
-        B = bg_prodstrexp(t,param)
- 
- 
-    Model parameters:
-    -------------------
+Notes
+-----
 
-     -----------------------------------------------------------------
-      Parameter                      Units   Lower    Upper    Start
-     -----------------------------------------------------------------
-      Decay Rate of 1st component    μs⁻¹      0       200      0.25 
-      Stretch factor 1st component             0        6        1
-      Decay Rate of 2nd component    μs⁻¹      0       200      0.25 
-      Stretch factor 2nd component             0        6        1
-     -----------------------------------------------------------------
+**Model:**
 
-    Parameters
-    ----------
-    t : array_like
-        Time axis, in microseconds.
-    param : array_like
-        List of model parameter values.
+:math:`B(t) = \exp\left(-\kappa_1 \vert t \vert^{d_1}\right) \exp\left(-\kappa_2 \vert t\vert^{d_2}\right)`
 
-    Returns
-    -------
-    info : dict
-        Dictionary containing the built-in information of the model:
-        
-        * ``info['Parameters']`` - string list of parameter names
-        * ``info['Units']`` - string list of metric units of parameters
-        * ``info['Start']`` - list of values used as start values during optimization 
-        * ``info['Lower']`` - list of values used as lower bounds during optimization 
-        * ``info['Upper']`` - list of values used as upper bounds during optimization 
-    B : ndarray
-        Background decay function. 
+============== ================= ============= ============= ============= =================================
+ Variable         Symbol          Start Value   Lower bound   Upper bound      Description
+============== ================= ============= ============= ============= =================================
+``param[0]``   :math:`\kappa_1`    0.25          0              200         1st strexp decay rate
+``param[1]``   :math:`d_1`         1             0              6           1st strexp stretch factor
+``param[2]``   :math:`\kappa_2`    0.25          0              200         2nd strexp decay rate
+``param[3]``   :math:`d_2`         1             0              6           2nd strexp stretch factor
+============== ================= ============= ============= ============= =================================
     """  
-# ======================================================================
-    if not args:
-        info = dict(
-            Parameters = ['Decay Rate of 1st component','Stretch factor of 1st component','Decay Rate of 2nd component','Stretch factor of 2nd component'],
-            Units = ['µs^-1','','µs^-1',''],
-            Start = np.asarray([0.25, 1, 0.25, 1]),
-            Lower = np.asarray([ 0,   0,  0,   0]),
-            Upper = np.asarray([200,  6, 200,  6])
-        )
-        return info
-    t,param = _parsargs(args, npar=4) 
-
-    # Unpack model paramters
+    t,param = _parsargs(t,param,npar=4) 
     kappa1 = param[0]
     d1 = param[1]
     kappa2 = param[2]
@@ -510,67 +427,37 @@ def bg_prodstrexp(*args):
 # ======================================================================
 
 
-
-def bg_sumstrexp(*args):
+# =================================================================
+@metadata(
+parameters = ['Decay Rate of 1st component','Stretch factor of 1st component',
+              'Amplitude of 1st component','Decay Rate of 2nd component','Stretch factor of 2nd component'],
+units = ['μs⁻¹','','','μs⁻¹',''],
+start = np.asarray([0.25, 1, 0.5, 0.25, 1]),
+lower = np.asarray([ 0,   0,  0,   0,   0]),
+upper = np.asarray([200,  6,  1,  200,  6]))
+@docstring()
+def bg_sumstrexp(t,param):
     r"""
-    Sum of two stretched exponentials background model
- 
-    If called without arguments, returns an ``info`` dictionary of model parameters and boundaries::
-
-        info = bg_sumstrexp()
-
-
-    Otherwise the function returns to calculated background model::
+Sum of two stretched exponentials background model
     
-        B = bg_sumstrexp(t,param)
- 
- 
-    Model parameters:
-    -------------------
+Notes
+-----
 
-     -----------------------------------------------------------------
-      Parameter                      Units   Lower    Upper    Start
-     -----------------------------------------------------------------
-      Decay Rate of 1st component    μs⁻¹      0       200      0.25 
-      Stretch factor 1st component             0        6        1
-      Amplitude of 1st component               0        1       0.50
-      Decay Rate of 2nd component    μs⁻¹      0       200      0.25 
-      Stretch factor 2nd component             0        6        1
-     -----------------------------------------------------------------
+**Model:**
 
-    Parameters
-    ----------
-    t : array_like
-        Time axis, in microseconds.
-    param : array_like
-        List of model parameter values.
+:math:`B(t) = A_1\exp \left(-\kappa_1 \vert t \vert^{d_1}\right) + (1-A_1)\exp\left(-\kappa_2 \vert t \vert^{d_2}\right)`
 
-    Returns
-    -------
-    info : dict
-        Dictionary containing the built-in information of the model:
-        
-        * ``info['Parameters']`` - string list of parameter names
-        * ``info['Units']`` - string list of metric units of parameters
-        * ``info['Start']`` - list of values used as start values during optimization 
-        * ``info['Lower']`` - list of values used as lower bounds during optimization 
-        * ``info['Upper']`` - list of values used as upper bounds during optimization 
-    B : ndarray
-        Background decay function. 
-    """  
-# ======================================================================
-    if not args:
-        info = dict(
-            Parameters = ['Decay Rate of 1st component','Stretch factor of 1st component','Amplitude of 1st component','Decay Rate of 2nd component','Stretch factor of 2nd component'],
-            Units = ['μs⁻¹','','','μs⁻¹',''],
-            Start = np.asarray([0.25, 1, 0.5, 0.25, 1]),
-            Lower = np.asarray([ 0,   0,  0,   0,   0]),
-            Upper = np.asarray([200,  6,  1,  200,  6])
-        )
-        return info
-    t,param = _parsargs(args, npar=5) 
-
-    # Unpack model paramters
+============== ================= ============= ============= ============= ========================================
+ Variable         Symbol          Start Value   Lower bound   Upper bound      Description
+============== ================= ============= ============= ============= ========================================
+``param[0]``   :math:`\kappa_1`     0.25            0            200         1st strexp decay rate (μs\ :sup:`-d`)
+``param[1]``   :math:`d_1`          1               0            6           1st strexp stretch factor
+``param[2]``   :math:`\kappa_2`     0.25            0            200         2nd strexp decay rate (μs\ :sup:`-d`)
+``param[3]``   :math:`d_2`          1               0            6           2nd strexp stretch factor
+``param[4]``   :math:`A_1`          0.50            0            1           Relative amplitude
+============== ================= ============= ============= ============= ========================================
+    """ 
+    t,param = _parsargs(t,param,npar=5) 
     kappa1 = param[0]
     d1 = param[1]
     w1 = param[2]
@@ -579,138 +466,72 @@ def bg_sumstrexp(*args):
     strexp1 = np.exp(-kappa1*abs(t)**d1)
     strexp2 = np.exp(-kappa2*abs(t)**d2)
     B = w1*strexp1 + (1-w1)*strexp2
-    
     return B
 # ======================================================================
 
 
-
-def bg_poly1(*args):
+# =================================================================
+@metadata(
+parameters = ['Intercept','1st-order coefficient'],
+units = ['','μs⁻¹'],
+start = np.asarray([ 1,   -1 ]),
+lower = np.asarray([ 0,  -200]),
+upper = np.asarray([200,  200]))
+@docstring()
+def bg_poly1(t,param):
     r"""
-    Polynomial 1st-order background model
- 
-    If called without arguments, returns an ``info`` dictionary of model parameters and boundaries::
+Polynomial 1st-order background model
+    
+Notes
+-----
 
-        info = bg_poly1()
+**Model:**
 
+:math:`B(t) = p_0 + p_1 t`
 
-    Otherwise the function returns to calculated background model::
-
-        B = bg_poly1(t,param)
- 
- 
-    Model parameters:
-    -------------------
-
-     ----------------------------------------------------------
-      Parameter              Units    Lower    Upper    Start
-     ----------------------------------------------------------
-      Intercept                         0       200       1  
-      1st-order coefficient  μs⁻¹    -200      200      -1  
-     ----------------------------------------------------------
-
-    Parameters
-    ----------
-    t : array_like
-        Time axis, in microseconds.
-    param : array_like
-        List of model parameter values.
-
-    Returns
-    -------
-    info : dict
-        Dictionary containing the built-in information of the model:
-        
-        * ``info['Parameters']`` - string list of parameter names
-        * ``info['Units']`` - string list of metric units of parameters
-        * ``info['Start']`` - list of values used as start values during optimization 
-        * ``info['Lower']`` - list of values used as lower bounds during optimization 
-        * ``info['Upper']`` - list of values used as upper bounds during optimization 
-    B : ndarray
-        Background decay function.  
+============== =============== ============= ============= ============= ====================================
+ Variable         Symbol        Start Value   Lower bound   Upper bound      Description
+============== =============== ============= ============= ============= ====================================
+``param[0]``    :math:`p_0`      1              0            200          Intercept
+``param[1]``    :math:`p_1`     -1              -200         200          1st order weight (μs\ :sup:`-1`)
+============== =============== ============= ============= ============= ====================================
     """  
-# ======================================================================
-    if not args:
-        info = dict(
-            Parameters = ['Intercept','1st-order coefficient'],
-            Units = ['','μs⁻¹'],
-            Start = np.asarray([ 1,   -1 ]),
-            Lower = np.asarray([ 0,  -200]),
-            Upper = np.asarray([200,  200])
-        )
-        return info
-    t,param = _parsargs(args, npar=2) 
-
-    print(param)
-    # Compute polynomial
+    t,param = _parsargs(t,param, npar=2) 
     p = np.copy(np.flip(param))
     p[:-1] = p[:-1]
     B = np.polyval(p,abs(t))
-
-    print(param)
-
-    return B
+    return B 
 # ======================================================================
 
 
-def bg_poly2(*args):
+# =================================================================
+@metadata(
+parameters = ['Intercept','1st-order coefficient','2nd-order coefficient'],
+units = ['','μs⁻¹','μs⁻²'],
+start = np.asarray([ 1,   -1 , -1]),
+lower = np.asarray([ 0,  -200, -200]),
+upper = np.asarray([200,  200,  200]))
+@docstring()
+def bg_poly2(t,param):
     r"""
-    Polynomial 2nd-order background model
- 
-    If called without arguments, returns an ``info`` dictionary of model parameters and boundaries::
+Polynomial 2nd-order background model
+     
+Notes
+-----
 
-        info = bg_poly2()
+**Model:**
 
+:math:`B(t) = p_0 + p_1 t + p_2t^2`
 
-    Otherwise the function returns to calculated background model::
-    
-        B = bg_poly2(t,param)
- 
- 
-    Model parameters:
-    -------------------
-
-     ----------------------------------------------------------
-      Parameter              Units    Lower    Upper    Start
-     ----------------------------------------------------------
-      Intercept                         0       200       1  
-      1st-order coefficient  μs⁻¹    -200      200      -1  
-      2nd-order coefficient  μs⁻²    -200      200      -1 
-     ----------------------------------------------------------
-
-    Parameters
-    ----------
-    t : array_like
-        Time axis, in microseconds.
-    param : array_like
-        List of model parameter values.
-
-    Returns
-    -------
-    info : dict
-        Dictionary containing the built-in information of the model:
-        
-        * ``info['Parameters']`` - string list of parameter names
-        * ``info['Units']`` - string list of metric units of parameters
-        * ``info['Start']`` - list of values used as start values during optimization 
-        * ``info['Lower']`` - list of values used as lower bounds during optimization 
-        * ``info['Upper']`` - list of values used as upper bounds during optimization 
-    B : ndarray
-        Background decay function.  
+============== =============== ============= ============= ============= ===================================
+ Variable         Symbol        Start Value   Lower bound   Upper bound      Description
+============== =============== ============= ============= ============= ===================================
+``param[0]``   :math:`p_0`       1               0            200          Intercept
+``param[1]``   :math:`p_1`      -1               -200         200          1st order weight (μs\ :sup:`-1`)
+``param[2]``   :math:`p_2`      -1               -200         200          2nd order weight (μs\ :sup:`-2`)
+============== =============== ============= ============= ============= ===================================
     """  
-# ======================================================================
-    if not args:
-        info = dict(
-            Parameters = ['Intercept','1st-order coefficient','2nd-order coefficient'],
-            Units = ['','μs⁻¹','μs⁻²'],
-            Start = np.asarray([ 1,   -1 , -1]),
-            Lower = np.asarray([ 0,  -200, -200]),
-            Upper = np.asarray([200,  200,  200])
-        )
-        return info
-    t,param = _parsargs(args, npar=3) 
-
-    # Compute polynomial
+    t,param = _parsargs(t,param,npar=3) 
     p = np.copy(np.flip(param))
     p[:-1] = p[:-1]
     B = np.polyval(p,abs(t))
@@ -718,65 +539,35 @@ def bg_poly2(*args):
 # ======================================================================
 
 
-def bg_poly3(*args):
+# =================================================================
+@metadata(
+parameters = ['Intercept','1st-order coefficient','2nd-order coefficient','3rd-order coefficient'],
+units = ['','μs⁻¹','μs⁻²','μs⁻³'],
+start = np.asarray([ 1,  -1  , -1,   -1  ]),
+lower = np.asarray([ 0,  -200, -200, -200]),
+upper = np.asarray([200,  200,  200,  200]))
+@docstring()
+def bg_poly3(t,param):
     r"""
-    Polynomial 3rd-order background model
- 
-    If called without arguments, returns an ``info`` dictionary of model parameters and boundaries::
+Polynomial 3rd-order background model
+     
+Notes
+-----
 
-        info = bg_poly3()
+**Model:**
 
+:math:`B(t) = p_0 + p_1t + p_2t^2 + p_3t^3`
 
-    Otherwise the function returns to calculated background model::
-
-        B = bg_poly3(t,param)
- 
- 
-    Model parameters:
-    -------------------
-
-     ----------------------------------------------------------
-      Parameter              Units    Lower    Upper    Start
-     ----------------------------------------------------------
-      Intercept                         0       200       1  
-      1st-order coefficient   μs⁻¹    -200      200      -1  
-      2nd-order coefficient   μs⁻²    -200      200      -1 
-      3rd-order coefficient   μs⁻³    -200      200      -1
-     ----------------------------------------------------------
-
-    Parameters
-    ----------
-    t : array_like
-        Time axis, in microseconds.
-    param : array_like
-        List of model parameter values.
-
-    Returns
-    -------
-    info : dict
-        Dictionary containing the built-in information of the model:
-        
-        * ``info['Parameters']`` - string list of parameter names
-        * ``info['Units']`` - string list of metric units of parameters
-        * ``info['Start']`` - list of values used as start values during optimization 
-        * ``info['Lower']`` - list of values used as lower bounds during optimization 
-        * ``info['Upper']`` - list of values used as upper bounds during optimization 
-    B : ndarray
-        Background decay function.  
+============== =============== ============= ============= ============= ===================================
+ Variable         Symbol        Start Value   Lower bound   Upper bound      Description
+============== =============== ============= ============= ============= ===================================
+``param[0]``   :math:`p_0`        1             0             200          Intercept
+``param[1]``   :math:`p_1`       -1          -200             200          1st order weight (μs\ :sup:`-1`)
+``param[2]``   :math:`p_2`       -1          -200             200          2nd order weight (μs\ :sup:`-2`)
+``param[3]``   :math:`p_3`       -1          -200             200          3rd order weight (μs\ :sup:`-3`)
+============== =============== ============= ============= ============= ===================================
     """  
-# ======================================================================
-    if not args:
-        info = dict(
-            Parameters = ['Intercept','1st-order coefficient','2nd-order coefficient','3rd-order coefficient'],
-            Units = ['','μs⁻¹','μs⁻²','μs⁻³'],
-            Start = np.asarray([ 1,  -1  , -1,   -1  ]),
-            Lower = np.asarray([ 0,  -200, -200, -200]),
-            Upper = np.asarray([200,  200,  200,  200])
-        )
-        return info
-    t,param = _parsargs(args, npar=4) 
-
-    # Compute polynomial
+    t,param = _parsargs(t,param,npar=4) 
     p = np.copy(np.flip(param))
     p[:-1] = p[:-1]
     B = np.polyval(p,abs(t))

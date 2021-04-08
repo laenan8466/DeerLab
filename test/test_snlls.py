@@ -1,5 +1,5 @@
 import numpy as np
-from deerlab import dipolarkernel,dd_gauss,dd_gauss2,snlls
+from deerlab import dipolarkernel,dd_gauss,dd_gauss2,snlls,whitegaussnoise
 from deerlab.bg_models import bg_exp
 from deerlab.utils import ovl
 
@@ -44,7 +44,7 @@ def assert_multigauss_SNLLS_problem(nonlinearconstr=True, linearconstr=True):
         ubl = []    
 
     # Separable LSQ fit
-    fit = snlls(V,lambda p: Kmodel(p,t,r),nlpar0,lb,ub,lbl,ubl, reg=False, uqanalysis=False)
+    fit = snlls(V,lambda p: Kmodel(p,t,r),nlpar0,lb,ub,lbl,ubl, reg=False, uq=False)
     nonlinfit = fit.nonlin
     linfit = fit.lin
     parout = [nonlinfit[0], nonlinfit[1], linfit[0], nonlinfit[2], nonlinfit[3], linfit[1]] 
@@ -89,7 +89,7 @@ def test_regularized():
     r = np.linspace(1,8,80)
     t = np.linspace(0,4,200)
     lam = 0.25
-    K = dipolarkernel(t,r,lam)
+    K = dipolarkernel(t,r,mod=lam)
     parin = [3.5, 0.4, 0.6, 4.5, 0.5, 0.4]
     P = dd_gauss2(r,parin)
     V = K@P
@@ -103,7 +103,7 @@ def test_regularized():
     lbl = np.zeros(len(r))
     ubl = []
     # Separable LSQ fit
-    fit = snlls(V,lambda lam: dipolarkernel(t,r,lam),nlpar0,lb,ub,lbl,ubl, uqanalysis=False)
+    fit = snlls(V,lambda lam: dipolarkernel(t,r,mod=lam),nlpar0,lb,ub,lbl,ubl, uq=False)
     Pfit = fit.lin
 
     assert  np.max(abs(P - Pfit)) < 1e-2
@@ -119,7 +119,7 @@ def assert_confidence_intervals(pci50,pci95,pfit,lb,ub):
     errors = []
     if not np.all(p95lb <= pfit) and not np.all(p50lb <= pfit):
         errors.append("Some fitted values are below the lower bound of the confidence intervals.")
-    if not np.all(p95ub >= pfit) and not np.all(p50lb >= pfit):
+    if not np.all(p95ub >= pfit) and not np.all(p50ub >= pfit):
         errors.append("Some fitted values are over the upper bound of the confidence intervals.")
     if not np.all(p95lb <= p50lb):
         errors.append("The 50%-CI has lower values than the 95%-CI")
@@ -129,20 +129,20 @@ def assert_confidence_intervals(pci50,pci95,pfit,lb,ub):
         errors.append("The lower bounds are not satisfied by the confidence intervals.")
     if not np.all(np.maximum(ub,p95ub)==ub):
         errors.append("The upper bounds are not satisfied by the confidence intervals.")
-    assert not errors, "Errors occured:\n{}".format("\n".join(errors))
+    assert not errors, f"Errors occured:\n{chr(10).join(errors)}"
 
 def test_confinter_linear():
 #=======================================================================
     "Check that the confidence intervals of the linear parameters are correct"
     
     # Prepare test data
-    r = np.linspace(1,8,80)
+    r = np.linspace(1,8,150)
     t = np.linspace(0,4,200)
     lam = 0.25
-    K = dipolarkernel(t,r,lam)
+    K = dipolarkernel(t,r,mod=lam)
     parin = [3.5, 0.4, 0.6, 4.5, 0.5, 0.4]
     P = dd_gauss2(r,parin)
-    V = K@P
+    V = K@P + whitegaussnoise(t,0.05,seed=1)
 
     # Non-linear parameters
     # nlpar = [lam]
@@ -153,11 +153,11 @@ def test_confinter_linear():
     lbl = np.zeros(len(r))
     ubl = np.full(len(r), np.inf)
     # Separable LSQ fit
-    fit = snlls(V,lambda lam: dipolarkernel(t,r,lam),nlpar0,lb,ub,lbl,ubl)
-    Pfit = fit.lin
-    uq = fit.uncertainty
-    Pci50 = uq.ci(50,'lin')
-    Pci95 = uq.ci(95,'lin')
+    fit = snlls(V,lambda lam: dipolarkernel(t,r,mod=lam),nlpar0,lb,ub,lbl)
+    Pfit =  np.round(fit.lin,6)
+    uq = fit.linUncert
+    Pci50 = np.round(uq.ci(50),6)
+    Pci95 = np.round(uq.ci(95),6)
 
     assert_confidence_intervals(Pci50,Pci95,Pfit,lbl,ubl)
 #=======================================================================
@@ -170,7 +170,7 @@ def test_confinter_nonlinear():
     r = np.linspace(1,8,80)
     t = np.linspace(0,4,200)
     lam = 0.25
-    K = dipolarkernel(t,r,lam)
+    K = dipolarkernel(t,r,mod=lam)
     parin = [3.5, 0.4, 0.6, 4.5, 0.5, 0.4]
     P = dd_gauss2(r,parin)
     V = K@P
@@ -185,13 +185,43 @@ def test_confinter_nonlinear():
     ubl = np.full(len(r), np.inf)
     # Separable LSQ fit
 
-    fit = snlls(V,lambda lam: dipolarkernel(t,r,lam),nlpar0,lb,ub,lbl,ubl)
+    fit = snlls(V,lambda lam: dipolarkernel(t,r,mod=lam),nlpar0,lb,ub,lbl,ubl)
     parfit = fit.nonlin
-    uq = fit.uncertainty
-    parci50 = uq.ci(50,'nonlin')
-    parci95 = uq.ci(95,'nonlin')
+    uq = fit.nonlinUncert
+    parci50 = uq.ci(50)
+    parci95 = uq.ci(95)
 
     assert_confidence_intervals(parci50,parci95,parfit,lb,ub)
+#=======================================================================
+
+def test_confinter_model():
+#=======================================================================
+    "Check that the confidence intervals of the fitted model are correct"
+    
+    # Prepare test data
+    r = np.linspace(1,8,150)
+    t = np.linspace(0,4,200)
+    lam = 0.25
+    K = dipolarkernel(t,r,mod=lam)
+    parin = [3.5, 0.4, 0.6, 4.5, 0.5, 0.4]
+    P = dd_gauss2(r,parin)
+    V = K@P + whitegaussnoise(t,0.05,seed=1)
+
+    nlpar0 = 0.2
+    lb = 0
+    ub = 1
+    lbl = np.full(len(r), 0)
+    # Separable LSQ fit
+    fit = snlls(V,lambda lam: dipolarkernel(t,r,mod=lam),nlpar0,lb,ub,lbl)
+    Vfit =  fit.model
+    Vuq = fit.modelUncert
+    Vci50 = Vuq.ci(50)
+    Vci95 = Vuq.ci(95)
+
+    Vlb = np.full(len(t), -np.inf)
+    Vub = np.full(len(t), np.inf)
+
+    assert_confidence_intervals(Vci50,Vci95,Vfit,Vlb,Vub)
 #=======================================================================
 
 def test_regularized_global():
@@ -205,8 +235,8 @@ def test_regularized_global():
     kappa = 0.50
     lam1 = 0.25
     lam2 = 0.35
-    K1 = dipolarkernel(t1,r,lam1,bg_exp(t1,kappa))
-    K2 = dipolarkernel(t2,r,lam2,bg_exp(t2,kappa))
+    K1 = dipolarkernel(t1,r,mod=lam1,bg=bg_exp(t1,kappa))
+    K2 = dipolarkernel(t2,r,mod=lam2,bg=bg_exp(t2,kappa))
     V1 = K1@P
     V2 = K2@P
 
@@ -214,8 +244,8 @@ def test_regularized_global():
     def globalKmodel(par):
         # Unpack parameters
         kappa,lam1,lam2 = par
-        K1 = dipolarkernel(t1,r,lam1,bg_exp(t1,kappa))
-        K2 = dipolarkernel(t2,r,lam2,bg_exp(t2,kappa))
+        K1 = dipolarkernel(t1,r,mod=lam1,bg=bg_exp(t1,kappa))
+        K2 = dipolarkernel(t2,r,mod=lam2,bg=bg_exp(t2,kappa))
         return K1, K2
 
     # Non-linear parameters
@@ -228,20 +258,18 @@ def test_regularized_global():
     ubl = []
 
     # Separable LSQ fit
-    fit = snlls([V1,V2],globalKmodel,par0,lb,ub,lbl,ubl, uqanalysis=False)
+    fit = snlls([V1,V2],globalKmodel,par0,lb,ub,lbl,ubl, uq=False)
     Pfit = fit.lin
 
     assert  ovl(P,Pfit) > 0.9
 #=======================================================================
 
-
-    
 def assert_solver(solver):    
     # Prepare test data
     r = np.linspace(1,8,80)
     t = np.linspace(0,4,200)
     lam = 0.25
-    K = dipolarkernel(t,r,lam)
+    K = dipolarkernel(t,r,mod=lam)
     parin = [3.5, 0.4, 0.6, 4.5, 0.5, 0.4]
     P = dd_gauss2(r,parin)
     V = K@P
@@ -255,7 +283,7 @@ def assert_solver(solver):
     lbl = np.zeros(len(r))
     ubl = []
     # Separable LSQ fit
-    fit = snlls(V,lambda lam: dipolarkernel(t,r,lam),nlpar0,lb,ub,lbl,ubl,nnlsSolver=solver, uqanalysis=False)
+    fit = snlls(V,lambda lam: dipolarkernel(t,r,mod=lam),nlpar0,lb,ub,lbl,ubl,nnlsSolver=solver, uq=False)
     Pfit = fit.lin
 
     assert  np.max(abs(P - Pfit)) < 1e-2
@@ -281,7 +309,7 @@ def test_nnls_nnlsbpp():
     assert_solver(solver='nnlsbpp')
 #=======================================================================
 
-def test_goodnes_of_fit():
+def test_goodness_of_fit():
 #============================================================
     "Check the goodness-of-fit statistics are correct"
         
@@ -289,7 +317,7 @@ def test_goodnes_of_fit():
     r = np.linspace(1,8,80)
     t = np.linspace(0,4,200)
     lam = 0.25
-    K = dipolarkernel(t,r,lam)
+    K = dipolarkernel(t,r,mod=lam)
     parin = [3.5, 0.15, 0.6, 4.5, 0.2, 0.4]
     P = dd_gauss2(r,parin)
     V = K@P
@@ -303,7 +331,7 @@ def test_goodnes_of_fit():
     lbl = np.zeros(len(r))
     ubl = []
     # Separable LSQ fit
-    fit = snlls(V,lambda lam: dipolarkernel(t,r,lam),nlpar0,lb,ub,lbl,ubl, uqanalysis=False)
+    fit = snlls(V,lambda lam: dipolarkernel(t,r,mod=lam),nlpar0,lb,ub,lbl,ubl, uq=False)
     stats = fit.stats
 
     assert abs(stats['chi2red'] - 1) < 5e-2 and abs(stats['R2'] - 1) < 5e-2
@@ -314,7 +342,7 @@ def assert_reg_type(regtype):
     r = np.linspace(1,8,80)
     t = np.linspace(0,4,100)
     lam = 0.25
-    K = dipolarkernel(t,r,lam)
+    K = dipolarkernel(t,r,mod=lam)
     parin = [3.5, 0.4, 0.6, 4.5, 0.5, 0.4]
     P = dd_gauss2(r,parin)
     V = K@P
@@ -328,28 +356,131 @@ def assert_reg_type(regtype):
     lbl = np.zeros(len(r))
     ubl = []
     # Separable LSQ fit
-    fit = snlls(V,lambda lam: dipolarkernel(t,r,lam),nlpar0,lb,ub,lbl,ubl,regtype = regtype, uqanalysis=False)
+    fit = snlls(V,lambda lam: dipolarkernel(t,r,mod=lam),nlpar0,lb,ub,lbl,ubl,regtype = regtype, uq=False)
     Pfit = fit.lin
     
     assert  np.max(abs(P - Pfit)) < 4e-2
 
 def test_reg_tikh():
 #=======================================================================
-    "Check SNNLS using Tikhonov regularization works"
+    "Check that SNLLS using Tikhonov regularization works"
 
     assert_reg_type(regtype='tikhonov')
 #=======================================================================
 
 def test_reg_tv():
 #=======================================================================
-    "Check SNNLS using Tikhonov regularization works"
+    "Check that SNLLS using total variation regularization works"
 
     assert_reg_type(regtype='tv')
 #=======================================================================
 
 def test_reg_huber():
 #=======================================================================
-    "Check SNNLS using Tikhonov regularization works"
+    "Check that SNNLS using Huber regularization works"
 
     assert_reg_type(regtype='huber')
 #=======================================================================
+
+def test_plot():
+# ======================================================================
+    "Check that the plot method works"
+
+    # Prepare test data
+    r = np.linspace(1,8,80)
+    t = np.linspace(0,4,200)
+    lam = 0.25
+    K = dipolarkernel(t,r,mod=lam)
+    parin = [3.5, 0.4, 0.6, 4.5, 0.5, 0.4]
+    P = dd_gauss2(r,parin)
+    V = K@P
+    # Linear parameters: non-negativity
+    lbl = np.zeros(len(r))
+    # Separable LSQ fit
+    fit = snlls(V,lambda lam: dipolarkernel(t,r,mod=lam),par0=0.2,lb=0,ub=1,lbl=lbl, uq=False)
+    fig = fit.plot(show=False)
+    
+    assert str(fig.__class__)=="<class 'matplotlib.figure.Figure'>"
+# ======================================================================
+
+def test_cost_value():
+#============================================================
+    "Check that the cost value is properly returned"
+
+    # Prepare test data
+    r = np.linspace(1,8,80)
+    t = np.linspace(0,4,200)
+    lam = 0.25
+    K = dipolarkernel(t,r,mod=lam)
+    parin = [3.5, 0.4, 0.6, 4.5, 0.5, 0.4]
+    P = dd_gauss2(r,parin)
+    V = K@P
+    # Non-linear parameters
+    nlpar0 = 0.2
+    lb = 0
+    ub = 1
+    # Linear parameters: non-negativity
+    lbl = np.zeros(len(r))
+    ubl = np.full(len(r), np.inf)
+    # Separable LSQ fit
+    fit = snlls(V,lambda lam: dipolarkernel(t,r,mod=lam),nlpar0,lb,ub,lbl,ubl)
+
+    assert isinstance(fit.cost,float) and np.round(fit.cost/np.sum(fit.residuals**2),5)==1
+#============================================================
+
+def test_confinter_values():
+# ======================================================================
+    "Check that the values of the confidence intervals are correct"
+
+    np.random.seed(0)
+    A0  = np.random.rand(300,2)
+    A = lambda p: 1 - p[0] + A0**p[1]
+    pnonlin = np.array([0.5,2])
+    plin = np.array([0.75,5.5])
+    y = A(pnonlin)@plin + 0.3*np.random.randn(300)
+
+    # Reference confidence intervals (calculated using lmfit package, see #116)
+    cov = [99.73,95.45,68.27]
+    a_ci_ref = [[0.4636991758611843, 0.5411943256617782], 
+                [0.47730341575508245, 0.5286896152296477], 
+                [0.4905189733270308, 0.5161245529171482]]
+    b_ci_ref = [[1.7876921926935445, 2.1089296764536907], 
+                [1.8384482433779732, 2.0515346381926847], 
+                [1.8899306688797555, 1.9961521871803736]]
+
+    fit = snlls(y,A,[1,0.5],reg=False)
+    a_ci = [fit.nonlinUncert.ci(cov[i])[0,:] for i in range(3)]
+    b_ci = [fit.nonlinUncert.ci(cov[i])[1,:] for i in range(3)]
+
+    ci_match = lambda ci,ci_ref,truth:np.max(abs(np.array(ci) - np.array(ci_ref)))/truth < 0.01
+    assert ci_match(a_ci,a_ci_ref,pnonlin[0]) & ci_match(b_ci,b_ci_ref,pnonlin[1])
+# ======================================================================
+
+
+def test_confinter_scaling():
+#============================================================
+    "Check that the confidence intervals are agnostic w.r.t. scaling"
+
+    # Prepare test data
+    r = np.linspace(1,8,80)
+    t = np.linspace(0,4,50)
+    lam = 0.25
+    K = dipolarkernel(t,r,mod=lam)
+    parin = [3.5, 0.4, 0.6, 4.5, 0.5, 0.4]
+    P = dd_gauss2(r,parin)
+    V = K@P
+    # Non-linear parameters
+    nlpar0 = 0.2
+    lb = 0
+    ub = 1
+    # Linear parameters: non-negativity
+    lbl = np.zeros(len(r))
+    V0_1 = 1
+    V0_2 = 1e9
+
+    # Separable LSQ fit
+    fit1 = snlls(V*V0_1,lambda lam: dipolarkernel(t,r,mod=lam),nlpar0,lb,ub,lbl)
+    fit2 = snlls(V*V0_2,lambda lam: dipolarkernel(t,r,mod=lam),nlpar0,lb,ub,lbl)
+
+    assert np.max(abs(fit1.linUncert.ci(95)/V0_1 - fit2.linUncert.ci(95)/V0_2)) < 0.05
+#============================================================

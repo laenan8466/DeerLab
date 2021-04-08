@@ -44,8 +44,7 @@ This class of functions can be used and/or combined to create fitting routines o
     :maxdepth: 1
 
     ./functions/snlls
-    ./functions/fitsignal
-    ./functions/backgroundstart
+    ./functions/fitmodel
     ./functions/fitmultimodel
     ./functions/fitparamodel
     ./functions/fitregmodel
@@ -59,7 +58,7 @@ This class of functions can be used and/or combined to create fitting routines o
 Function                                         Description
 =============================================  ============================================================
 :ref:`snlls`                                     Separable non-linear least squares solver
-:ref:`fitsignal`                                 Full model signal fitting engine
+:ref:`fitmodel`                                 Full model signal fitting engine
 :ref:`bootan`                                    Bootstrap uncertainty analysis
 :ref:`fitmultimodel`                             Multi-component model fitting engine
 :ref:`fitparamodel`                              Parametric model fitting engine
@@ -131,7 +130,7 @@ This class of functions provides several tools for quick commands typically requ
     ./functions/deerload
     ./functions/noiselevel
     ./functions/fftspec
-    ./functions/distdesc
+    ./functions/diststats
 
 
 
@@ -151,6 +150,13 @@ Function                                         Description
 Legacy Functions
 =========================================
 
+.. toctree::
+    :hidden:
+    :glob:
+    :maxdepth: 1
+
+    ./functions/time2dist
+    ./functions/correctscale
 
 This group of functions provides tools for reproducing analysis methods or workflows encountered in older software. These functions are not recommended for routine data analysis.
 

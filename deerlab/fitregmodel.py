@@ -9,13 +9,14 @@ from deerlab.nnls import fnnls, cvxnnls, nnlsbpp
 import deerlab as dl
 import copy
 from deerlab.utils import hccm, goodness_of_fit
-from deerlab.classes import UncertQuant, FitResult
+from deerlab.classes import UQResult, FitResult
 
-def fitregmodel(V,K,r, regtype='tikhonov', regparam='aic', regorder=2, solver='cvx', 
-                weights=1, huberparam=1.35, nonnegativity=True, obir = False, 
-                uqanalysis=True, renormalize=True, noiselevelaim = -1):
+def fitregmodel(V, K, r, regtype='tikhonov', regparam='aic', regorder=2, solver='cvx', 
+                weights=1, huberparam=1.35, nonnegativity=True, obir=False, 
+                uq=True, renormalize=True, noiselevelaim=None, tol=None, maxiter=None):
     r"""
-    Fits a non-parametric distance distribution to one (or several) signals using regularization aproaches.
+    Fits a non-parametric distance distribution to one (or several) signals using regularization aproaches 
+    via non-negative least-squares (NNLS).
 
     Parameters 
     ----------
@@ -34,6 +35,7 @@ def fitregmodel(V,K,r, regtype='tikhonov', regparam='aic', regorder=2, solver='c
         * ``'tikhonov'`` - Tikhonov regularizaton
         * ``'tv'``  - Total variation regularization
         * ``'huber'`` - Huber regularization
+        
         The default is ``'tikhonov'``.   
     
     regparam : string or scalar, optional
@@ -53,6 +55,7 @@ def fitregmodel(V,K,r, regtype='tikhonov', regparam='aic', regorder=2, solver='c
         * ``'ncp'`` - Normalized Cumulative Periodogram (NCP)
         * ``'gml'`` - Generalized Maximum Likelihood (GML)
         * ``'mcl'`` - Mallows' C_L (MCL)
+        
         The regularization parameter can be manually specified by passing a scalar value instead of a string.
         The default ``'aic'``.
     
@@ -68,9 +71,10 @@ def fitregmodel(V,K,r, regtype='tikhonov', regparam='aic', regorder=2, solver='c
         * ``'cvx'`` - Optimization of the NNLS problem using cvxopt
         * ``'fnnls'`` - Optimization using the fast NNLS algorithm.
         * ``'nnlsbpp'`` - Optimization using the block principal pivoting NNLS algorithm.
+        
         The default is ``'cvx'``.
 
-    uqanalysis : boolean, optional
+    uq : boolean, optional
         Enable/disable the uncertainty quantification analysis, by default it is enabled. 
     
     nonnegativity : boolean, optional
@@ -88,17 +92,30 @@ def fitregmodel(V,K,r, regtype='tikhonov', regparam='aic', regorder=2, solver='c
     noiselevelaim : scalar, optional
         Noise level at which to stop the OBIR algorithm. If not specified it is automatically estimated from the fit residuals.
 
+    tol : scalar, optional 
+        Tolerance value for convergence of the NNLS algorithm. If not specified (``None``), the value is set automatically to ``tol = max(K.T@K.shape)*norm(K.T@K,1)*eps``.
+        It is only valid for the ``'cvx'`` and ``'fnnls'`` solvers, it has no effect on the ``'nnlsbpp'`` solver.
+        
+    maxiter: scalar, optional  
+        Maximum number of iterations before termination. If not specified (``None``), the value is set automatically to ``maxiter = 5*shape(K.T@K)[1]``.
+        It is only valid for the ``'cvx'`` and ``'fnnls'`` solvers, it has no effect on the ``'nnlsbpp'`` solver.
 
     Returns
     -------
     :ref:`FitResult` with the following fields defined:
     P : ndarray
-        Fitted distance distribution
+        Fitted distance distribution.
     
-    uncertainty : :ref:`UncertQuant`
-        Covariance-based uncertainty quantification of the fitted distance distribution
-    
-    alpha : float int
+    V : ndarray 
+        Fitted dipolar signal.
+
+    Puncert : :ref:`UQResult`
+        Covariance-based uncertainty quantification of the fitted distance distribution.
+   
+    VUncert : :ref:`UQResult`
+        Covariance-based uncertainty quantification of the fitted dipolar signal.
+     
+    regparam : float int
         Regularization parameter used in the optimization
     
     scale : float int or list of float int
@@ -107,8 +124,10 @@ def fitregmodel(V,K,r, regtype='tikhonov', regparam='aic', regorder=2, solver='c
     plot : callable
         Function to display the results. It will 
         display the fitted signals and distance distributions with
-        confidence intervals. If requested, the function returns 
-        the `matplotlib.axes` object as output. 
+        confidence intervals. The function returns the figure object 
+        (``matplotlib.figure.Figure``) object as output, which can be 
+        modified. Using ``fig = plot(show=False)`` will not render
+        the figure unless ``display(fig)`` is called. 
     
     stats : dict
         Goodness of fit statistical estimators (if ``full_output=True``):
@@ -133,8 +152,15 @@ def fitregmodel(V,K,r, regtype='tikhonov', regparam='aic', regorder=2, solver='c
     # Prepare signals, kernels and weights if multiple are passed
     V, K, weights, subsets, prescales = dl.utils.parse_multidatasets(V, K, weights,precondition=True)
 
-    # Compute regularization matrix
+    # Determine an optimal value of the regularization parameter if requested
+    if type(regparam) is str:
+        alpha = dl.selregparam(V,K,r,regtype,regparam,regorder=regorder,weights=weights, nonnegativity=nonnegativity,huberparam=huberparam)
+    else:
+        alpha = regparam
+
+    # Prepare components of the LSQ problem
     L = dl.regoperator(r,regorder)
+    KtKreg, KtV = dl.lsqcomponents(V,K,L,alpha,weights, regtype=regtype, huberparam=huberparam)
 
     # Determine the type of problem to solve
     if obir:
@@ -144,43 +170,35 @@ def fitregmodel(V,K,r, regtype='tikhonov', regparam='aic', regorder=2, solver='c
     else:
         problem = 'unconstrained'
 
-    # If the regularization parameter is not specified, get the optimal choice
-    if type(regparam) is str:
-        alpha = dl.selregparam(V,K,r,regtype,regparam,regorder=regorder,weights=weights, nonnegativity=nonnegativity,huberparam=huberparam)
-    else:
-        alpha = regparam
-
-    # Prepare components of the LSQ-problem
-    [KtKreg, KtV] = dl.lsqcomponents(V,K,L,alpha,weights, regtype=regtype, huberparam=huberparam)
-
-    # Unconstrained LSQ problem
+    # Solve unconstrained LSQ problem
     if problem == 'unconstrained':
         Pfit = np.linalg.solve(KtKreg,KtV)
 
-    # Osher-Bregman iterated regularization
+    # Solve using Osher-Bregman iterated regularization
     elif problem == 'obir':
-        Pfit = _obir(V,K,L,regtype,alpha,weights,noiselevelaim=noiselevelaim,huberparam = huberparam, solver = solver)
-    # Non-negative LSQ problem
+        Pfit = _obir(V,K,L,regtype,alpha,weights,noiselevelaim=noiselevelaim,huberparam=huberparam, solver=solver)
+    
+    # Solve non-negative LSQ problem
     elif problem == 'nnls':
 
         if solver == 'fnnls':
-            Pfit = fnnls(KtKreg,KtV)
+            Pfit = fnnls(KtKreg,KtV,tol=tol,maxiter=maxiter)
         elif solver == 'nnlsbpp':
             Pfit = nnlsbpp(KtKreg,KtV,np.linalg.solve(KtKreg,KtV))
         elif solver == 'cvx':
-            Pfit = cvxnnls(KtKreg, KtV)
+            Pfit = cvxnnls(KtKreg,KtV,tol=tol,maxiter=maxiter)
         else:
-            raise KeyError(f'{solver} is not a known non-negative least squares solver')
+            raise KeyError(f'{solver} is not a known non-negative least squares solver.')
 
     # Get fit final status
     Vfit = K@Pfit
     success = ~np.all(Pfit==0)
     res = V - Vfit
     fval = np.linalg.norm(V - Vfit)**2 + alpha**2*np.linalg.norm(L@Pfit)**2
-        
+
     # Uncertainty quantification
     # ----------------------------------------------------------------
-    if uqanalysis:
+    if uq:
         # Construct residual parts for for the residual and regularization terms
         res = weights*(V - K@Pfit)
 
@@ -192,21 +210,33 @@ def fitregmodel(V,K,r, regtype='tikhonov', regparam='aic', regorder=2, solver='c
         covmat = hccm(J,res,'HC1')
         
         # Construct confidence interval structure for P
-        NonNegConst = np.zeros(len(r))
-        Puq = UncertQuant('covariance',Pfit,covmat,NonNegConst,[])
+        if nonnegativity:
+            NonNegConst = np.zeros(len(r))
+        else: 
+            NonNegConst = None
+        Puq = UQResult('covariance',Pfit,covmat,NonNegConst)
     else:
-        Puq = UncertQuant('void')
+        Puq = UQResult('void')
 
+    # Get fitted signals and their uncertainty
+    # --------------------------------------
+    modelfit, modelfituq = [],[]
+    for subset in subsets: 
+        subset_model = lambda P: (K@P)[subset]
+        modelfit.append(subset_model(Pfit))
+        if uq: 
+            modelfituq.append(Puq.propagate(subset_model))
+        else:
+            modelfituq.append(UQResult('void'))
     
     # Re-normalization of the distributions
     # --------------------------------------
     postscale = np.trapz(Pfit,r)
     if renormalize:
         Pfit = Pfit/postscale
-        if uqanalysis:
+        if uq:
             Puq_ = copy.deepcopy(Puq) # need a copy to avoid infite recursion on next step
-            Puq.ci = lambda p: Puq_.ci(p)/postscale
-
+            Puq = Puq_.propagate(lambda P: P/postscale, lbm=np.zeros_like(Pfit))
 
     # Goodness-of-fit
     # --------------------------------------
@@ -215,8 +245,6 @@ def fitregmodel(V,K,r, regtype='tikhonov', regparam='aic', regorder=2, solver='c
     for subset in subsets: 
         Ndof = len(V[subset]) - np.trace(H)
         stats.append(goodness_of_fit(V[subset],Vfit[subset],Ndof))
-    if len(stats)==1: 
-        stats = stats[0]
 
 
     # Signal amplitude scales
@@ -224,14 +252,20 @@ def fitregmodel(V,K,r, regtype='tikhonov', regparam='aic', regorder=2, solver='c
     scales = []
     for i in range(len(subsets)): 
         scales.append(prescales[i]*postscale)
+
     if len(scales)==1:
         scales = scales[0]
+        stats = stats[0]
+        modelfit = modelfit[0]
+        modelfituq = modelfituq[0]
 
     # Results display
     # ---------------------------------------
-    plotfcn = lambda: _plot(subsets,V,Vfit,r,Pfit,Puq)
+    def plotfcn(show=False):
+        fig = _plot(subsets,V,Vfit,r,Pfit,Puq,show)
+        return fig 
 
-    return FitResult(P=Pfit, V=Vfit, uncertainty=Puq, regparam=alpha, scale=scales, stats=stats, 
+    return FitResult(P=Pfit, V=modelfit, Puncert=Puq, Vuncert=modelfituq, regparam=alpha, scale=scales, stats=stats, 
                      plot=plotfcn, cost=fval, residuals=res, success=success)
 # ===========================================================================================
 
@@ -270,30 +304,33 @@ def _augment(res,J,regtype,alpha,L,P,eta):
 # ===========================================================================================
 
 
-def _obir(V,K,L, regtype, alpha, weights, noiselevelaim=-1, huberparam=1.35 , solver = 'cvx'):
+def _obir(V,K,L, regtype, alpha, weights, noiselevelaim=None, huberparam=1.35 , solver = 'cvx'):
 # ===========================================================================================
     """
     Osher's Bregman-iterated regularization method
     ==============================================
 
-    P = OBIR(V,K,r,'type',alpha)
+    P = OBIR(V,K,r,regtype,alpha)
 
     OBIR of the N-point signal (V) to a M-point distance
     distribution (P) given a M-point distance axis (r) and NxM point kernel
     (K). The regularization parameter (alpha) controls the regularization
     properties.
 
-    The type of regularization employed in OBIR is set by the 'type'
+    The type of regularization employed in OBIR is set by the regtype
     input argument. The regularization models implemented in OBIR are:
         'tikhonov' -   Tikhonov regularization
         'tv'       -   Total variation regularization
         'huber'    -   pseudo-Huber regularization
 
-    P = OBIR(...,'Property',Value)
-    Additional (optional) arguments can be passed as name-value pairs.
+    Additional (optional) keyword arguments:
+      weights          weights  
+      noiselevelaim    the noise level to aim for, automatic if set to None
+      huberparam       parameter for Huber reguarization
+      solver           solver to use: 'cvx', 'fnnls', or 'nnlsbpp'
     """
 
-    if noiselevelaim == -1:
+    if noiselevelaim is None:
         noiselevelaim = dl.noiselevel(V)
 
     MaxOuterIter = 5000
@@ -322,10 +359,10 @@ def _obir(V,K,L, regtype, alpha, weights, noiselevelaim=-1, huberparam=1.35 , so
         # Store previous iteration distribution
         Pprev = Pfit
         
-        #Update
+        # Update
         KtVsg = KtV - subGrad
         
-        #Get solution of current Bregman iteration
+        # Get solution of current Bregman iteration
         if solver == 'fnnls':
             Pfit = fnnls(KtKreg,KtVsg)
         elif solver == 'nnlsbpp':
@@ -333,7 +370,7 @@ def _obir(V,K,L, regtype, alpha, weights, noiselevelaim=-1, huberparam=1.35 , so
         elif solver == 'cvx':
             Pfit = cvxnnls(KtKreg, KtVsg)
         else:
-            raise KeyError(f'{solver} is not a known non-negative least squares solver')
+            raise KeyError(f'{solver} is not a known non-negative least squares solver.')
         
         # Update subgradient at current solution
         subGrad = subGrad + weights*K.T@(K@Pfit - V)
@@ -372,10 +409,10 @@ def _obir(V,K,L, regtype, alpha, weights, noiselevelaim=-1, huberparam=1.35 , so
     return Pfit
 # ===========================================================================================
 
-def _plot(subsets,Vexp,Vfit,r,Pfit,Puq):
+def _plot(subsets,Vexp,Vfit,r,Pfit,Puq,show=False):
 # ===========================================================================================
     nSignals = len(subsets)
-    _,axs = plt.subplots(nSignals+1,figsize=[7,3+3*nSignals])
+    fig,axs = plt.subplots(nSignals+1,figsize=[7,3+3*nSignals])
     for i in range(nSignals): 
         subset = subsets[i]
         # Plot the experimental signal and fit
@@ -383,7 +420,7 @@ def _plot(subsets,Vexp,Vfit,r,Pfit,Puq):
         axs[i].plot(Vfit[subset],'tab:blue')
         axs[i].grid(alpha=0.3)
         axs[i].set_xlabel('Array Elements')
-        axs[i].set_ylabel('V[{}]'.format(i))
+        axs[i].set_ylabel(f'V[{i}]')
         axs[i].legend(('Data','Fit'))
 
     # Get confidence intervals for the distance distribution
@@ -393,14 +430,14 @@ def _plot(subsets,Vexp,Vfit,r,Pfit,Puq):
     axs[nSignals].plot(r,Pfit,'tab:blue')
     axs[nSignals].fill_between(r,Pci95[:,0], Pci95[:,1],facecolor='tab:blue',linestyle='None',alpha=0.2)
     axs[nSignals].fill_between(r,Pci50[:,0], Pci50[:,1],facecolor='tab:blue',linestyle='None',alpha=0.4)
-    axs[nSignals].set_xlabel('Distance [nm]')
-    axs[nSignals].set_ylabel('P [nm⁻¹]')
+    axs[nSignals].set_xlabel('Distance (nm)')
+    axs[nSignals].set_ylabel('P (nm⁻¹)')
     axs[nSignals].legend(('Fit','95%-CI','50%-CI'))
     axs[nSignals].grid(alpha=0.3)
     plt.tight_layout()
-    plt.show()
-    return axs
+    if show:
+        plt.show()
+    else:
+        plt.close()
+    return fig
 # ===========================================================================================
-
-
-

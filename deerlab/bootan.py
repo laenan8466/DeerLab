@@ -7,10 +7,11 @@ import numpy as np
 import types
 from tqdm.auto import tqdm
 from joblib import Parallel, delayed
-from deerlab.classes import UncertQuant
+from deerlab.classes import UQResult
 
 def bootan(fcn,Vexp,Vfit, samples=1000, resampling='gaussian', verbose = False, cores=1):
-    r""" Bootstrap analysis for uncertainty quantification
+    r""" 
+    Bootstrap analysis for uncertainty quantification
 
     Parameters
     ----------
@@ -36,6 +37,7 @@ def bootan(fcn,Vexp,Vfit, samples=1000, resampling='gaussian', verbose = False, 
 
         * ``'gaussian'`` - Sample noise from a Gaussian distribution.
         * ``'residual'`` - Sample noise from the fit residuals.
+        
         The default is ``'gaussian'``.
 
     cores : scalar, optional
@@ -50,7 +52,7 @@ def bootan(fcn,Vexp,Vfit, samples=1000, resampling='gaussian', verbose = False, 
 
     Returns
     -------
-    bootuq : :ref:`UncertQuant` or list of :ref:`UncertQuant`
+    bootuq : :ref:`UQResult` or list of :ref:`UQResult`
         Bootstrap uncertainty quantification for each variable returned by ``fcn``. 
 
 
@@ -83,7 +85,7 @@ def bootan(fcn,Vexp,Vfit, samples=1000, resampling='gaussian', verbose = False, 
     nSignals = len(Vexp)
     for i in range(len(Vfit)):
         if len(Vexp[i])!=len(Vfit[i]):
-            raise KeyError('The V and Vfit #{} must have the same number of elements.'.format(i))
+            raise KeyError(f'The V and Vfit #{i} must have the same number of elements.')
     if type(fcn) is not types.FunctionType:
         raise KeyError('The 1st argument must be a callable function accepting dataset(s) as input.')
 
@@ -136,7 +138,7 @@ def bootan(fcn,Vexp,Vfit, samples=1000, resampling='gaussian', verbose = False, 
         return out
 
     # Run bootsample() for all samples in series (cores=1) or in parallel (cores>1)
-    if verbose : print('Bootstrap analysis with {0} cores:'.format(cores))          
+    if verbose : print(f'Bootstrap analysis with {cores} cores:')          
     out = _ProgressParallel(n_jobs=cores,total=nSamples,use_tqdm=verbose)(delayed(bootsample)() for _ in range(nSamples))
     
     # Post-process the outputs
@@ -158,7 +160,7 @@ def bootan(fcn,Vexp,Vfit, samples=1000, resampling='gaussian', verbose = False, 
     #-------------------------------------------------------------------------------
     stats = []
     for variables in evals:
-        stats.append(UncertQuant('bootstrap',variables))
+        stats.append(UQResult('bootstrap',variables))
     if len(stats)==1:
         stats = stats[0]
     return stats

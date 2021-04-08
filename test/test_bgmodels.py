@@ -7,12 +7,11 @@ def assert_bgmodel(model,Bref,physical=False):
     t = np.linspace(-5,5,500)
 
     # Extract model information
-    info = model()
-    par0 = info['Start']
-    lower = info['Lower']
-    upper = info['Upper']
-    paramnames = info['Parameters']
-    units = info['Units']
+    par0 = model.start
+    lower = model.lower
+    upper = model.upper
+    paramnames = model.parameters
+    units = model.units
 
     # Calculate under different conditions
     B1 = model(t,par0)
@@ -47,7 +46,7 @@ def assert_bgmodel(model,Bref,physical=False):
         errors.append("The number of parameter names and units are not equal.")
 
     # assert no error message has been registered, else print messages
-    assert not errors, "{}".format(", ".join(errors))
+    assert not errors, f"Errors occured:\n{chr(10).join(errors)}"
  
 
 def test_bg_hom3d():

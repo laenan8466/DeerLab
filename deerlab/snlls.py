@@ -13,37 +13,45 @@ from numpy.linalg import solve
 import deerlab as dl
 from deerlab.utils import goodness_of_fit, hccm, isempty, Jacobian
 from deerlab.nnls import cvxnnls, fnnls, nnlsbpp
-from deerlab.classes import UncertQuant, FitResult
+from deerlab.classes import UQResult, FitResult
 
 def snlls(y, Amodel, par0, lb=None, ub=None, lbl=None, ubl=None, nnlsSolver='cvx', reg='auto', weights=1,
-          regtype='tikhonov', regparam='aic', multistart=1, regorder=2, alphareopt=1e-3,
+          regtype='tikhonov', regparam='aic', multistart=1, regorder=2, alphareopt=1e-3, extrapenalty=None,
           nonlin_tol=1e-9, nonlin_maxiter=1e8, lin_tol=1e-15, lin_maxiter=1e4, huberparam=1.35,
-          uqanalysis=True):
+          uq=True):
     r""" Separable Non-linear Least Squares Solver
 
     Parameters
     ----------
     y : array_like or list of array_like
         Input data to be fitted.
+        
     Amodel : callable
         Function taking an array of non-linear parameters and
         returning a matrix array or a list thereof.
+
     par0 : array_like
         Start values of the non-linear parameters.
+
     lb : array_like, optional
         Lower bounds for the non-linear parameters, assumed unconstrained if not specified.
+
     ub : array_like, optional
         Upper bounds for the non-linear parameters, assumed unconstrained if not specified.
+
     lbl : array_like, optional
         Lower bounds for the linear parameters, assumed unconstrained if not specified.
+
     ubl : array_like, optional
         Upper bounds for the linear parameters, assumed unconstrained if not specified.
+
     reg : boolean or string, optional
         Determines the use of regularization on the solution of the linear problem.
         
         * ``'auto'`` - Automatic decision based con the condition number of the non-linear model ``Amodel``.
         * ``True`` - Forces regularization regardless of the condition number
         * ``False`` - Disables regularization regardless of the condition number
+        
         The default is ``'auto'``.
 
     regType : string, optional
@@ -52,10 +60,12 @@ def snlls(y, Amodel, par0, lb=None, ub=None, lbl=None, ubl=None, nnlsSolver='cvx
         * ``'tikhonov'`` - Tikhonov regularizaton
         * ``'tv'``  - Total variation regularization
         * ``'huber'`` - Huber regularization
+        
         The default is ``'tikhonov'``.
 
     regorder : int scalar, optional
         Order of the regularization operator
+
     regParam : string or float scalar, optional
         Method for the automatic selection of the optimal regularization parameter:
 
@@ -73,8 +83,13 @@ def snlls(y, Amodel, par0, lb=None, ub=None, lbl=None, ubl=None, nnlsSolver='cvx
         * ``'ncp'`` - Normalized Cumulative Periodogram (NCP)
         * ``'gml'`` - Generalized Maximum Likelihood (GML)
         * ``'mcl'`` - Mallows' C_L (MCL)
+        
         The regularization parameter can be manually specified by passing a scalar value
         instead of a string. The default ``'aic'``.
+
+    custom_penalty: callable 
+        Custom penalty function to impose upon the solution. Must return a vector to be
+        added to the residual vector. 
 
     alphareopt : float scalar, optional
         Relative parameter change threshold for reoptimizing the regularization parameter
@@ -86,6 +101,7 @@ def snlls(y, Amodel, par0, lb=None, ub=None, lbl=None, ubl=None, nnlsSolver='cvx
         * ``'cvx'`` - Optimization of the NNLS problem using the cvxopt package.
         * ``'fnnls'`` - Optimization using the fast NNLS algorithm.
         * ``'nnlsbpp'`` - Optimization using the block principal pivoting NNLS algorithm.
+        
         The default is ``'cvx'``.
 
     weights : array_like, optional
@@ -107,30 +123,32 @@ def snlls(y, Amodel, par0, lb=None, ub=None, lbl=None, ubl=None, nnlsSolver='cvx
     lin_tol : float scalar, optional
         Linear solver function tolerance, the default is 1e-15.
 
-    uqanalysis : boolean, optional
+    uq : boolean, optional
         Enable/disable the uncertainty quantification analysis, by default it is enabled.
 
 
     Returns
     -------
     :ref:`FitResult` with the following fields defined:
-    nlin : ndarray
+    nonlin : ndarray
         Fitted non-linear parameters
     lin : ndarray
         Fitted linear parameters
-    paramuq : :ref:`UncertQuant`
-        Uncertainty quantification of the joined parameter
-        set (linear + non-linear parameters). The confidence intervals
-        of the individual subsets can be requested via:
-
-        * ``paramuq.ci(n)``           - n%-CI of the full parameter set
-        * ``paramuq.ci(n,'lin')``     - n%-CI of the linear parameter set
-        * ``paramuq.ci(n,'nonlin')``  - n%-CI of the non-linear parameter set
+    modelfit : ndarray
+        Fitted model
+    nonlinUncert : :ref:`UQResult`
+        Uncertainty quantification of the non-linear parameter set.
+    linUncert : :ref:`UQResult`
+        Uncertainty quantification of the linear parameter set.
+    modelUncert : :ref:`UQResult`
+        Uncertainty quantification of the fitted model.
     regparam : scalar
         Regularization parameter value used for the regularization of the linear parameters.
     plot : callable
         Function to display the results. It will display the fitted data.
-        If requested, the function returns the `matplotlib.axes` object as output. 
+        The function returns the figure object (``matplotlib.figure.Figure``)
+        object as output, which can be modified. Using ``fig = plot(show=False)`` 
+        will not render the figure unless ``display(fig)`` is called. 
     stats : dict
         Goodness of fit statistical estimators
 
@@ -191,21 +209,21 @@ def snlls(y, Amodel, par0, lb=None, ub=None, lbl=None, ubl=None, nnlsSolver='cvx
     par0 = np.atleast_1d(par0)
 
     # Parse multiple datsets and non-linear operators into a single concatenated vector/matrix
-    y, Amodel, weights, subsets, _ = dl.utils.parse_multidatasets(y, Amodel, weights, precondition=True)
+    y, Amodel, weights, subsets, prescales = dl.utils.parse_multidatasets(y, Amodel, weights, precondition=True)
 
     # Get info on the problem parameters and non-linear operator
     A0 = Amodel(par0)
     Nnonlin = len(par0)
     Nlin = np.shape(A0)[1]
     linfit = np.zeros(Nlin)
-    alpha = 0
+    scales = [1 for _ in subsets]
 
     # Determine whether to use regularization penalty
     illConditioned = np.linalg.cond(A0) > 10
     if reg == 'auto':
-        includePenalty = illConditioned
+        includeRegularization  = illConditioned
     else:
-        includePenalty = reg
+        includeRegularization  = reg
 
     # Checks for bounds constraints
     # ----------------------------------------------------------
@@ -244,15 +262,14 @@ def snlls(y, Amodel, par0, lb=None, ub=None, lbl=None, ubl=None, nnlsSolver='cvx
     # Check for non-negativity constraints on the linear solution
     nonNegativeOnly = (np.all(lbl == 0)) and (np.all(np.isinf(ubl)))
 
-
-    if includePenalty:
-        # Use an arbitrary axis
-        ax = np.arange(1, Nlin+1)
+    # Use an arbitrary axis
+    ax = np.arange(1, Nlin+1)
+    if includeRegularization :
         # Get regularization operator
         regorder = np.minimum(Nlin-1, regorder)
         L = dl.regoperator(ax, regorder)
     else:
-        L = np.eye(Nlin, Nlin)
+        L = None
 
     # Prepare the linear solver
     # ----------------------------------------------------------
@@ -281,6 +298,31 @@ def snlls(y, Amodel, par0, lb=None, ub=None, lbl=None, ubl=None, nnlsSolver='cvx
     check = False
     regparam_prev = 0
     par_prev = [0]*len(par0)
+    alpha = None
+
+    def linear_problem(A,optimize_alpha,alpha):
+    #===========================================================================
+        """
+        Linear problem
+        ------------------
+        Solves the linear subproblem of the SNLLS objective function via linear LSQ 
+        constrained, unconstrained, or regularized.
+        """
+        
+        # Optimiza the regularization parameter only if needed
+        if optimize_alpha:
+            alpha = dl.selregparam(y, A, ax, regtype, regparam, regorder=regorder)
+
+        # Components for linear least-squares
+        AtA, Aty = dl.lsqcomponents(y, A, L, alpha, weights, regtype=regtype)
+         
+        # Solve the linear least-squares problem
+        result = linSolver(AtA, Aty)
+        linfit = parseResult(result)
+        linfit = np.atleast_1d(linfit)
+        
+        return linfit, alpha
+    #===========================================================================
 
     def ResidualsFcn(p):
     #===========================================================================
@@ -291,53 +333,67 @@ def snlls(y, Amodel, par0, lb=None, ub=None, lbl=None, ubl=None, nnlsSolver='cvx
         non-linear least-squares solver. 
         """
 
-        nonlocal par_prev, check, regparam_prev, linfit, alpha
+        nonlocal par_prev, check, regparam_prev, scales, linfit, alpha
+
         # Non-linear model evaluation
         A = Amodel(p)
 
-        # Regularization components
-        if includePenalty:
+
+        # Check whether optimization of the regularization parameter is needed
+        if includeRegularization :
             if type(regparam) is str:
                 # If the parameter vector has not changed by much...
                 if check and all(abs(par_prev-p)/p < alphareopt):
                     # ...use the alpha optimized in the previous iteration
+                    optimize_alpha = False
                     alpha = regparam_prev
                 else:
                     # ...otherwise optimize with current settings
-                    alpha = dl.selregparam(y, A, ax, regtype, regparam, regorder=regorder)
+                    alpha = regparam
+                    optimize_alpha = True
                     check = True
             else:
                 # Fixed regularization parameter
                 alpha = regparam
-
+                optimize_alpha = False
             # Store current iteration data for next one
             par_prev = p
             regparam_prev = alpha
-
         else:
             # Non-linear operator without penalty
+            optimize_alpha = False
             alpha = 0
 
-        # Components for linear least-squares
-        AtA, Aty = dl.lsqcomponents(y, A, L, alpha, weights, regtype=regtype)
+        linfit,alpha = linear_problem(A,optimize_alpha,alpha)
+        regparam_prev = alpha
 
-        # Solve the linear least-squares problem
-        result = linSolver(AtA, Aty)
-        linfit = parseResult(result)
-        linfit = np.atleast_1d(linfit)
         # Evaluate full model residual
         yfit = A@linfit
-        # Compute residual vector
-        res = weights*(yfit - y)
-        if includePenalty:
-            penalty = alpha*L@linfit
-            # Augmented residual
-            res = np.concatenate((res, penalty))
-            res, _ = _augment(res, [], regtype, alpha, L, linfit, huberparam, Nnonlin)
 
+        # Optimize the scale yfit
+        scales, scales_vec = [], np.zeros_like(yfit) 
+        for subset in subsets:
+            yfit_,y_ = (np.atleast_2d(y[subset]) for y in [yfit, y]) # Rescale the subsets corresponding to each signal
+            scale = np.squeeze(np.linalg.lstsq(yfit_.T,y_.T,rcond=None)[0])
+            scales.append(scale) # Store the optimized scales of each signal
+            scales_vec[subset] = scale 
+
+        # Compute residual vector
+        res = weights*(scales_vec*(Amodel(p)@linfit) - y)
+
+        # Compute residual from custom penalty
+        if callable(extrapenalty):
+            penres = extrapenalty(p)
+            penres = np.atleast_1d(penres)
+            res = np.concatenate((res,penres))
+
+        if includeRegularization:
+            # Augmented residual
+            res_reg, _ = reg_penalty(regtype, alpha, L, linfit, huberparam, Nnonlin)
+            res = np.concatenate((res,res_reg))
+        
         return res
     #===========================================================================
-
 
     # Preprare multiple start global optimization if requested
     if multistart > 1 and not nonLinearConstrained:
@@ -353,81 +409,111 @@ def snlls(y, Amodel, par0, lb=None, ub=None, lbl=None, ubl=None, nnlsSolver='cvx
         sol = least_squares(ResidualsFcn, par0, bounds=(lb, ub), max_nfev=int(nonlin_maxiter), ftol=nonlin_tol)
         nonlinfits.append(sol.x)
         linfits.append(linfit)
-        fvals.append(sol.cost)
+        fvals.append(2*sol.cost) # least_squares uses 0.5*sum(residual**2)          
         sols.append(sol)
+
     # Find global minimum from multiple runs
     globmin = np.argmin(fvals)
     linfit = linfits[globmin]
     nonlinfit = nonlinfits[globmin]
     sol = sols[globmin]
     Afit = Amodel(nonlinfit)
-    yfit = Afit@linfit
+
+    scales_vec = np.zeros_like(y) 
+    for subset,scale in zip(subsets,scales): 
+        scales_vec[subset] = scale 
+    yfit = scales_vec*(Afit@linfit)
 
     # Uncertainty analysis
-    #--------------------------------------------------------
-    if uqanalysis:
-        # Compue the residual vector
-        res = weights*(yfit - y)
+    #---------------------
+    if uq:
+        # Compute the fit residual
+        res = ResidualsFcn(nonlinfit)
+        
+        # Jacobian (non-linear part)
+        Jnonlin = Jacobian(ResidualsFcn,nonlinfit,lb,ub)
 
-        # Compute the Jacobian for the linear and non-linear parameters
-        fcn = lambda p: Amodel(p)@linfit
-        Jnonlin = Jacobian(fcn,nonlinfit,lb,ub)
+        # Jacobian (linear part)
+        Jlin = np.zeros((len(res),len(linfit)))
+        Jlin[:len(y),:] = scales_vec[:,np.newaxis]*Amodel(nonlinfit)
+        if includeRegularization:
+            Jlin[len(res)-Nlin:,:] = reg_penalty(regtype, alpha, L, linfit, huberparam, Nnonlin)[1]
 
-        Jlin = Afit
-        J = np.concatenate((Jnonlin, Jlin),1)
-
-        # Augment the residual and Jacobian with the regularization penalty on the linear parameters
-        res, J = _augment(res, J, regtype, regparam_prev, L, linfit, huberparam, Nnonlin)
+        # Full Jacobian
+        J = np.concatenate((Jnonlin,Jlin),axis=1)
 
         # Calculate the heteroscedasticity consistent covariance matrix
         covmatrix = hccm(J, res, 'HC1')
-        
+
         # Get combined parameter sets and boundaries
         parfit = np.concatenate((nonlinfit, linfit))
         lbs = np.concatenate((lb, lbl))
         ubs = np.concatenate((ub, ubl))
 
         # Construct the uncertainty quantification object
-        paramuq_ = UncertQuant('covariance', parfit, covmatrix, lbs, ubs)
-        paramuq = copy.deepcopy(paramuq_)
+        paramuq = UQResult('covariance', parfit, covmatrix, lbs, ubs)
 
-        def ci(coverage,ptype='full'):
-        #===========================================================================
-            "Wrapper around the CI function handle of the uncertainty structure"
-            # Get requested confidence interval of joined parameter set
-            paramci = paramuq_.ci(coverage)
-            if ptype == 'nonlin':
-                # Return only confidence intervals on non-linear parameters
-                paramci = paramci[range(Nnonlin), :]
-            elif ptype == 'lin':
-                # Return only confidence intervals on linear parameters
-                paramci = paramci[Nnonlin:, :]
-            return paramci
-        #===========================================================================
+        # Split the uncertainty quantification of nonlinear/linear parts
+        nonlin_subset = np.arange(0,Nnonlin)
+        lin_subset = np.arange(Nnonlin,Nnonlin+Nlin)
+        paramuq_nonlin = uq_subset(paramuq,nonlin_subset,lb,ub)
+        paramuq_lin = uq_subset(paramuq,lin_subset,lbl,ubl)
 
-        # Add the function to the confidence interval function call
-        paramuq.ci = ci
     else:
-        paramuq = []
+        paramuq_nonlin = UQResult('void')
+        paramuq_lin = UQResult('void')
+
+
+    for i in range(len(subsets)):
+        scales[i] *= prescales[i]
+
+    # Get fitted signals and their uncertainty
+    parfit = np.concatenate((nonlinfit, linfit))
+    nonlin_idx = np.arange(len(nonlinfit))
+    lin_idx = np.arange(len(nonlinfit),len(parfit))
+    modelfit, modelfituq = [],[]
+    for i,subset in enumerate(subsets): 
+        subset_model = lambda p: scales[i]*((Amodel(p[nonlin_idx])@p[lin_idx])[subset])
+        modelfit.append(subset_model(parfit))
+        if uq: 
+            modelfituq.append(paramuq.propagate(subset_model))
+        else:
+            modelfituq.append(UQResult('void'))
 
     # Goodness-of-fit
-    # --------------------------------------
+    # ---------------
     stats = []
     for subset in subsets:
         Ndof = len(y[subset]) - Nnonlin
         stats.append(goodness_of_fit(y[subset], yfit[subset], Ndof))
     if len(stats) == 1: 
         stats = stats[0]
+        fvals = fvals[0]
+        modelfit = modelfit[0]
+        modelfituq = modelfituq[0]
 
     # Display function
-    plotfcn = lambda: _plot(subsets,y,yfit)
+    def plotfcn(show=False):
+        fig = _plot(subsets,y,yfit,show)
+        return fig
 
-    return FitResult(nonlin=nonlinfit, lin=linfit, uncertainty=paramuq, regparam=alpha, plot=plotfcn,
-                     stats=stats, cost=fvals, residuals=sol.fun, success=sol.success)
+    return FitResult(nonlin=nonlinfit, lin=linfit, model=modelfit, nonlinUncert=paramuq_nonlin,
+                     linUncert=paramuq_lin, modelUncert=modelfituq, regparam=alpha, plot=plotfcn,
+                     stats=stats, cost=fvals, residuals=sol.fun, success=sol.success, scale=scales)
 # ===========================================================================================
 
 
-def _augment(res, J, regtype, alpha, L, x, eta, Nnonlin):
+def uq_subset(uq_full,subset,subset_lb,subset_ub):
+#===========================================================================
+    "Get the uncertainty quantification for a subset of parameters"
+
+    subset_model = lambda x: x[subset]
+    uq_subset = uq_full.propagate(subset_model,lbm=subset_lb, ubm=subset_ub)
+
+    return uq_subset
+#===========================================================================
+
+def reg_penalty(regtype, alpha, L, x, eta, Nnonlin):
 # ===========================================================================================
     """
     LSQ residual and Jacobian augmentation
@@ -453,20 +539,15 @@ def _augment(res, J, regtype, alpha, L, x, eta, Nnonlin):
     resreg = alpha*resreg
     Jreg = alpha*Jreg
 
-    # Augment jacobian and residual
-    res = np.concatenate((res, resreg))
-    if np.size(J) != 0:
-        Jreg = np.concatenate((np.zeros((np.shape(L)[0],Nnonlin)), Jreg),1)
-        J = np.concatenate((J, Jreg))
-
-    return res, J
+    return resreg, Jreg
 # ===========================================================================================
 
 
-def _plot(subsets,y,yfit):
+def _plot(subsets,y,yfit,show):
 # ===========================================================================================
     nSignals = len(subsets)
-    _,axs = plt.subplots(nSignals+1,figsize=[7,3*nSignals])
+    fig,axs = plt.subplots(nSignals,figsize=[7,3*nSignals])
+    axs = np.atleast_1d(axs)
     for i in range(nSignals): 
         subset = subsets[i]
         # Plot the experimental signal and fit
@@ -474,10 +555,13 @@ def _plot(subsets,y,yfit):
         axs[i].plot(yfit[subset],'tab:blue')
         axs[i].grid(alpha=0.3)
         axs[i].set_xlabel('Array elements')
-        axs[i].set_ylabel('Data #{}'.format(i))
+        axs[i].set_ylabel(f'Data #{i}')
         axs[i].legend(('Data','Fit'))
     plt.tight_layout()
-    plt.show()
-    return axs
+    if show:
+        plt.show()
+    else:
+        plt.close()
+    return fig
 # ===========================================================================================
 

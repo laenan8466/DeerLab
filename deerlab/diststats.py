@@ -7,27 +7,27 @@ import numpy as np
 import warnings
 import copy
 from scipy.signal import find_peaks
+from scipy.integrate import cumtrapz
 
 def diststats(r, P, Puq=None, verbose=False, threshold=None):
-    r""" Computes statistical quantities for the location, spread and shape 
-    of a distance distribution with or without their corresponding uncertainties.
+    r""" Computes statistical quantities for the location, spread, and shape 
+    of a distance distribution, with or without their corresponding uncertainties.
 
     Parameters
     ----------
     r : array_like
-        Distance axis in nm. 
+        Distance axis, in nm. 
     
     P : array_like
-        Distance distribution.
+        Distance distribution, does not have to be normalized.
     
-    Puq : :ref:`UncertQuant`
-        Uncertainty quantification of the distance distribution. If not 
-        specified, the one single output is returned without any uncertainty 
-        estimation. If specified, two outputs are returned containing the 
-        uncertainty estimation.
+    Puq : :ref:`UQResult`, optional
+        Uncertainty quantification of the distance distribution. If Puq is not given, a
+        single output is returned without any uncertainty estimation. If given, two outputs
+        are returned containing the uncertainty estimation.
     
     verbose : boolean, optional
-        Enables printing a summary of all statistical quantities and their uncertainties if calculated.
+        Print a summary of all statistical quantities (and their uncertainties if calculated).
     
     threshold : float, optional
         Peak detection threshold for the calculation of modes of a distribution. The default is ``max(P)/10``.
@@ -35,114 +35,117 @@ def diststats(r, P, Puq=None, verbose=False, threshold=None):
     Returns
     -------
     estimators : dict
-        Dictionary of shape, location and spread descriptors of 
-        the input distance distribution:
+        Dictionary of shape, location, and spread descriptors of the input distance distribution:
         
         General parameters
 
-            * ``'rmin'`` - Minimum distance in the distribution range in nm
-            * ``'rmax'`` - Maximum distance in the distribution range in nm
+            * ``'rmin'`` - Minimum distance in the distribution range, in nm
+            * ``'rmax'`` - Maximum distance in the distribution range, in nm
             * ``'int'`` - Integral of the distance distribution
 
         Location parameters
 
-            * ``'mean'`` or ``'moment1'`` - Mean distance in nm (see `more <https://en.wikipedia.org/wiki/Mean>`_)
-            * ``'median'`` - Median distance in nm (see `more <https://en.wikipedia.org/wiki/Median>`_)
-            * ``'iqm'`` - Interquartile mean (IQM) distance in nm (see `more <https://en.wikipedia.org/wiki/Interquartile_mean>`_)
-            * ``'mode'`` - First modal distance in nm (see `more <https://en.wikipedia.org/wiki/Mode_(statistics)>`_)
-            * ``'modes'`` - All modal distances in nm (see `more <https://en.wikipedia.org/wiki/Mode_(statistics)>`_)
+            * ``'mean'`` or ``'moment1'`` - Mean distance, in nm (see `more <https://en.wikipedia.org/wiki/Mean>`__)
+            * ``'median'`` - Median distance, in nm (see `more <https://en.wikipedia.org/wiki/Median>`__)
+            * ``'iqm'`` - Interquartile mean (IQM) distance, in nm (see `more <https://en.wikipedia.org/wiki/Interquartile_mean>`__)
+            * ``'mode'`` - First modal distance, in nm (see `more <https://en.wikipedia.org/wiki/Mode_(statistics)>`__)
+            * ``'modes'`` - All modal distances, in nm (see `more <https://en.wikipedia.org/wiki/Mode_(statistics)>`__)
 
         Spread parameters
 
-            * ``'iqr'`` - Interquartile range in nm (see `more <https://en.wikipedia.org/wiki/Interquartile_range>`_)
-            * ``'mad'`` - Mean absolute deviation (MAD)  in nm (see `more <https://en.wikipedia.org/wiki/Average_absolute_deviation>`_)
-            * ``'std'`` - Standard deviation  in nm (see `more <https://en.wikipedia.org/wiki/Standard_deviation>`_)
-            * ``'var'`` or ``'moment2'`` - Variance in nm² (see `more <https://en.wikipedia.org/wiki/Variance>`_)
-            * ``'entropy'`` - Shannon entropy (see `more <https://en.wikipedia.org/wiki/Entropy_(information_theory)>`_)
+            * ``'iqr'`` - Interquartile range, in nm (see `more <https://en.wikipedia.org/wiki/Interquartile_range>`__)
+            * ``'mad'`` - Mean absolute deviation (MAD), in nm (see `more <https://en.wikipedia.org/wiki/Average_absolute_deviation>`__)
+            * ``'std'`` - Standard deviation, in nm (see `more <https://en.wikipedia.org/wiki/Standard_deviation>`__)
+            * ``'var'`` or ``'moment2'`` - Variance, in nm² (see `more <https://en.wikipedia.org/wiki/Variance>`__)
+            * ``'entropy'`` - Shannon entropy, in nat (see `more <https://en.wikipedia.org/wiki/Entropy_(information_theory)>`__)
 
         Shape parameters
 
-            * ``'modality'`` - Modality (number of peaks)
-            * ``'skewness'`` or ``'moment3'`` - Skewness (see `more <https://en.wikipedia.org/wiki/Skewness>`_)
-            * ``'kurtosis'`` - Excess kurtosis (see `more <https://en.wikipedia.org/wiki/Kurtosis>`_)
-            * ``'moment4'`` - 4th moment (kurtosis) (see `more <https://en.wikipedia.org/wiki/Kurtosis>`_)
+            * ``'modality'`` - Modality (number of modes)
+            * ``'skewness'`` or ``'moment3'`` - Skewness (see `more <https://en.wikipedia.org/wiki/Skewness>`__)
+            * ``'kurtosis'`` - Excess kurtosis (see `more <https://en.wikipedia.org/wiki/Kurtosis>`__)
+            * ``'moment4'`` - 4th moment (kurtosis) (see `more <https://en.wikipedia.org/wiki/Kurtosis>`__)
 
-    uq : dict of :ref:`UncertQuant`
+    uq : dict of :ref:`UQResult`
         Dictionary of the parameters covariance-based uncertainty quantifications. 
-        See above for the dictionary keys. Only calculated if ``Puq`` is specified.
+        See above for the dictionary keys. Only calculated if ``Puq`` is provided.
 
     Notes
     -----
-    The ``'mode'``, ``'modes'`` and ``'modality'`` parameters have no corresponding covariance-based
-    uncertainty quantification since they are mathematically not defined. These can, however, be 
-    calculated via bootsrapping of these quantities, e.g. ::
+    For the ``'mode'``, ``'modes'`` and ``'modality'`` parameters, covariance-based uncertainties are not 
+    available. Unvertainties can, however, be calculated via bootsrapping of these quantities, e.g. ::
 
         def analyze_rmode(V):
-            fit = dl.fitsignal(V,t,r)
+            fit = dl.fitmodel(V,t,r)
             rmode = dl.diststats(fit.P,r)[0]['mode']
             return rmode
-        # Bootstrap analysis of distance mode    
-        rmode_uq = dl.bootan(V,Vfit,analyze_r_mode)
+        # Bootstrap analysis of distance mode
+        rmode_uq = dl.bootan(V,Vfit,analyze_rmode)
 
     """
 
     P,r = np.atleast_1d(P,r)
+
+    # Check to avoid non-sensical results with syntax diststats(P,r)
+    if not np.all(np.diff(r)>0): 
+        raise KeyError('The distance axis (1st argument) must be a monotnously increasing vector.')
 
     if threshold is None:
         threshold = np.max(P)/10
 
     # Auxiliary functions
     # -------------------
-
     # Percentile function
-    def pctile(P,p):
-        cdf = np.cumsum(P/np.sum(P))
+    def pctile(r,P,p):
+        cdf = cumtrapz(P,r,initial=0)
         cdf, index = np.lib.arraysetops.unique(cdf,return_index=True)
         rpctile = np.interp(p/100,cdf,r[index])
         return rpctile
     # Expectation operator function
-    def E(x,P):
-        return np.sum(x*P/np.sum(P))
-        
-    # 0th moment  - Integral 
-    intfcn = lambda P: np.trapz(P,r)
+    def E(x,P,r):
+        return np.trapz(x*P,r)
 
     # Location estimators
     # -------------------
     # 1st moment  - Mean 
-    meanfcn = lambda P: E(r,P)
+    meanfcn = lambda P: E(r,P,r)
     # Median
-    medianfcn = lambda P: pctile(P,50)
+    medianfcn = lambda P: pctile(r,P,50)
     # Interquartile mean
-    iqmfcn = lambda P: E(r[(r>pctile(P,25)) & (r<pctile(P,75))],P[(r>pctile(P,25)) & (r<pctile(P,75))]) 
+    def iqmfcn(P):
+        IQrange = (r>pctile(r,P,25)) & (r<pctile(r,P,75))
+        return E(r[IQrange],P[IQrange]/np.trapz(P[IQrange],r[IQrange]),r[IQrange]) 
     # Mode
-    modefcn = lambda P: r[np.argmax(P/np.sum(P))]
+    modefcn = lambda P: r[np.argmax(P)]
     # Modes
     modesfcn = lambda P: r[find_peaks(P,height=threshold)[0]]
 
     # Spread estimators
     # -----------------
     # Interquartile range
-    iqrfcn = lambda P: pctile(P,75) - pctile(P,25)
+    iqrfcn = lambda P: pctile(r,P,75) - pctile(r,P,25)
     # Mean absolute deviation
-    madfcn = lambda P: E(abs(r - meanfcn(P)),P)
+    madfcn = lambda P: E(abs(r - meanfcn(P)),P,r)
     # 2nd moment - Variance
-    variancefcn = lambda P: E(r**2 - meanfcn(P)**2,P)
+    variancefcn = lambda P: E(r**2 - meanfcn(P)**2,P,r)
     # 2nd moment - Standard deviation
     stdfcn = lambda P: np.sqrt(variancefcn(P))
     # Entropy (information theory)
-    entropyfcn = lambda P: -E(np.log(np.maximum(np.finfo(float).eps,P)),P)
+    entropyfcn = lambda P: -E(np.log(np.maximum(np.finfo(float).eps,P)),P,r)
 
     # Shape estimators
     # ----------------
     # Modality
     modalityfcn = lambda P:  np.size(modesfcn(P))
     # 3rd moment - Skewness
-    skewnessfcn = lambda P: E(((r - meanfcn(P))/stdfcn(P))**3,P)
+    skewnessfcn = lambda P: E(((r - meanfcn(P))/stdfcn(P))**3,P,r)
     # 4th moment - Kurtosis
-    kurtosisfcn = lambda P: E(((r - meanfcn(P))/stdfcn(P))**4,P)
+    kurtosisfcn = lambda P: E(((r - meanfcn(P))/stdfcn(P))**4,P,r)
     # Excess kurtosis 
-    exkurtosisfcn = lambda P: 3 - E(((r - meanfcn(P))/stdfcn(P))**4,P)
+    exkurtosisfcn = lambda P: 3 - E(((r - meanfcn(P))/stdfcn(P))**4,P,r)
+        
+    # 0th moment  - Integral 
+    intfcn = lambda P: np.trapz(P,r)
 
     # Calculate distribution estimators
     estimators = {
@@ -224,54 +227,54 @@ def _print_estimators(r,estimators,uq):
         print('-------------------------------------------------')
         print('Distribution Statistics')
         print('-------------------------------------------------')
-        print('Range                    {:.2f}-{:.2f} nm'.format(min(r),max(r)))
-        print('Integral                 {:.2f}'.format(estimators['int']))
+        print(f'Range                    {min(r):.2f}-{max(r):.2f} nm')
+        print(f'Integral                 {estimators["int"]:.2f}')
         print('-------------------------------------------------')
         print('Location')
         print('-------------------------------------------------')
-        print('Mean                     {:.2f} nm'.format(estimators['mean']))
-        print('Median                   {:.2f} nm'.format(estimators['median']))
-        print('Interquartile mean       {:.2f} nm'.format(estimators['iqm']))
-        print('Mode                     {:.2f} nm'.format(estimators['mode']))
+        print(f'Mean                     {estimators["mean"]:.2f} nm')
+        print(f'Median                   {estimators["median"]:.2f} nm')
+        print(f'Interquartile mean       {estimators["iqm"]:.2f} nm')
+        print(f'Mode                     {estimators["mode"]:.2f} nm')
         print('-------------------------------------------------')
         print('Spread')
         print('-------------------------------------------------')
-        print('Standard deviation       {:.2f} nm'.format(estimators['std']))
-        print('Mean absolute deviation  {:.2f} nm'.format(estimators['mad']))
-        print('Interquartile range      {:.2f} nm'.format(estimators['iqr']))
-        print('Variance                 {:.2f} nm²'.format(estimators['var']))
+        print(f'Standard deviation       {estimators["std"]:.2f} nm')
+        print(f'Mean absolute deviation  {estimators["mad"]:.2f} nm')
+        print(f'Interquartile range      {estimators["iqr"]:.2f} nm')
+        print(f'Variance                 {estimators["var"]:.2f} nm²')
         print('-------------------------------------------------')
         print('Shape')
         print('-------------------------------------------------')
-        print('Modality                 {0}    '.format(estimators['modality']))
-        print('Skewness                 {:.2f} '.format(estimators['skewness']))
-        print('Excess kurtosis          {:.2f} '.format(estimators['kurtosis']))
+        print(f'Modality                 {estimators["modality"]}    ')
+        print(f'Skewness                 {estimators["skewness"]:.2f} ')
+        print(f'Excess kurtosis          {estimators["kurtosis"]:.2f} ')
         print('-------------------------------------------------')
     else:
         print('-------------------------------------------------')
         print('Distribution Statistics')
         print('-------------------------------------------------')
-        print('Range                    {:.2f}-{:.2f} nm'.format(min(r),max(r)))
-        print('Integral                 {:.2f}'.format(estimators['int']))
+        print(f'Range                    {min(r):.2f}-{max(r):.2f} nm')
+        print(f'Integral                 {estimators["int"]:.2f}')
         print('-------------------------------------------------')
         print('Location')
         print('-------------------------------------------------')
-        print('Range                    {:.2f}-{:.2f} nm'.format(min(r),max(r)))
-        print('Mean                     {:.2f} ({:.2f},{:.2f}) nm'.format(estimators['mean'],uq['mean'].ci(95)[0],uq['mean'].ci(95)[1]))
-        print('Median                   {:.2f} ({:.2f},{:.2f}) nm'.format(estimators['median'],uq['median'].ci(95)[0],uq['median'].ci(95)[1]))
-        print('Interquartile mean       {:.2f} ({:.2f},{:.2f}) nm'.format(estimators['iqm'],uq['iqm'].ci(95)[0],uq['iqm'].ci(95)[1]))
-        print('Mode                     {:.2f} nm'.format(estimators['mode']))
+        print(f'Range                    {min(r):.2f}-{max(r):.2f} nm')
+        print(f'Mean                     {estimators["mean"]:.2f} ({uq["mean"].ci(95)[0]:.2f},{uq["mean"].ci(95)[1]:.2f}) nm')
+        print(f'Median                   {estimators["median"]:.2f} ({uq["median"].ci(95)[0]:.2f},{uq["median"].ci(95)[1]:.2f}) nm')
+        print(f'Interquartile mean       {estimators["iqm"]:.2f} ({uq["iqm"].ci(95)[0]:.2f},{uq["iqm"].ci(95)[1]:.2f}) nm')
+        print(f'Mode                     {estimators["mode"]:.2f} nm')
         print('-------------------------------------------------')
         print('Spread')
         print('-------------------------------------------------')
-        print('Standard deviation       {:.2f} ({:.2f},{:.2f}) nm'.format(estimators['std'],uq['std'].ci(95)[0],uq['std'].ci(95)[1]))
-        print('Mean absolute deviation  {:.2f} ({:.2f},{:.2f}) nm'.format(estimators['mad'],uq['mad'].ci(95)[0],uq['mad'].ci(95)[1]))
-        print('Interquartile range      {:.2f} ({:.2f},{:.2f}) nm'.format(estimators['iqr'],uq['iqr'].ci(95)[0],uq['iqr'].ci(95)[1]))
-        print('Variance                 {:.2f} ({:.2f},{:.2f}) nm²'.format(estimators['var'],uq['var'].ci(95)[0],uq['var'].ci(95)[1]))
+        print(f'Standard deviation       {estimators["std"]:.2f} ({uq["std"].ci(95)[0]:.2f},{uq["std"].ci(95)[1]:.2f}) nm')
+        print(f'Mean absolute deviation  {estimators["mad"]:.2f} ({uq["mad"].ci(95)[0]:.2f},{uq["mad"].ci(95)[1]:.2f}) nm')
+        print(f'Interquartile range      {estimators["iqr"]:.2f} ({uq["iqr"].ci(95)[0]:.2f},{uq["iqr"].ci(95)[1]:.2f}) nm')
+        print(f'Variance                 {estimators["var"]:.2f} ({uq["var"].ci(95)[0]:.2f},{uq["var"].ci(95)[1]:.2f}) nm²')
         print('-------------------------------------------------')
         print('Shape')
         print('-------------------------------------------------')
-        print('Modality                 {0}                    '.format(estimators['modality']))
-        print('Skewness                 {:.2f} ({:.2f},{:.2f}) '.format(estimators['skewness'],uq['skewness'].ci(95)[0],uq['skewness'].ci(95)[1]))
-        print('Kurtosis                 {:.2f} ({:.2f},{:.2f}) '.format(estimators['kurtosis'],uq['kurtosis'].ci(95)[0],uq['kurtosis'].ci(95)[1]))
+        print(f'Modality                 {estimators["modality"]}')
+        print(f'Skewness                 {estimators["skewness"]:.2f} ({uq["skewness"].ci(95)[0]:.2f},{uq["skewness"].ci(95)[1]:.2f}) ')
+        print(f'Kurtosis                 {estimators["kurtosis"]:.2f} ({uq["kurtosis"].ci(95)[0]:.2f},{uq["kurtosis"].ci(95)[1]:.2f}) ')
         print('-------------------------------------------------')

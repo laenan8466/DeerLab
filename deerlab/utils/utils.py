@@ -190,14 +190,14 @@ def hccm(J,*args):
             
         elif mode.upper() == 'HC4': # Cribari-Neto,(2004),[4]
             # Compute discount factor
-            delta = min(4,n*h/k)
+            delta = np.minimum(4,n*h/k)
             # Estimate the data covariance matrix
             V = np.diag(res**2./((1 - h)**delta))
             
         elif mode.upper() == 'HC5': # Cribari-Neto,(2007),[5]
             # Compute inflation factor
             k = 0.7
-            alpha = min(max(4,k*max(h)/np.mean(h)),h/np.mean(h))
+            alpha = np.minimum(np.maximum(4,k*max(h)/np.mean(h)),h/np.mean(h))
             # Estimate the data covariance matrix
             V = np.diag(res**2./(np.sqrt((1 - h)**alpha)))
                 
@@ -211,6 +211,21 @@ def hccm(J,*args):
     return C
 #===============================================================================
 
+
+# =================================================================
+def metadata(**kwargs):
+    """
+    Decorator: Set model metadata as function attributes 
+    """
+    attributes = list(kwargs.keys())
+    metadata = list(kwargs.values())
+
+    def _setmetadata(func):
+        for attribute,data in zip(attributes,metadata):
+            setattr(func,attribute,data)
+        return func
+    return _setmetadata
+# =================================================================
 
 def gsvd(A,B):
 #===============================================================================
